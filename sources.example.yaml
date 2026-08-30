@@ -1,0 +1,37 @@
+# X to MD settings — copy to sources.yaml and edit.
+#
+# WHAT YOU FOLLOW does not live here: it lives in sources/x.md (copy
+# sources.example/ to get started) — one handle per line.
+
+# X is fetched via one of two paid, hosted backends — no X account, no
+# login, no self-hosting either way:
+#
+# twitterapi.io (https://twitterapi.io, the default) — pay-per-tweet, no
+# subscription: $0.15 per 1,000 tweets *returned*, so keep
+# fetch.max_per_source bounded (not 0).
+#
+# tweetapi.com (https://tweetapi.com) — flat monthly request quota instead
+# (e.g. $17/mo for 100,000 calls on the Pro tier; ~20 tweets/call).
+x:
+  backend: twitterapi     # twitterapi | tweetapi
+  api_key: ""             # twitterapi.io key — or set XMD_TWITTERAPI_KEY
+  tweetapi_api_key: ""    # tweetapi.com key — or set XMD_TWEETAPI_KEY (only
+                          # needed when backend: tweetapi)
+
+fetch:
+  max_per_source: 15     # cap items kept per handle per fetch (0 = unlimited,
+                         # unsafe on a paid-per-tweet backend — see above)
+  max_age_hours: 48      # stop paginating a handle once a tweet older than
+                         # this is seen (0 = unlimited); also bounds cost
+
+filters:
+  drop_retweets: false   # include retweets (shown with a 🔁 line quoting
+                         # the original) — set true to exclude them
+  drop_replies: true     # exclude replies (thread continuations to your own
+                         # tweets are always kept regardless)
+  block_keywords: []     # drop tweets whose text contains any of these
+                         # (case-insensitive), e.g. ["#ad", "giveaway"]
+
+sources_dir: sources     # where sources/x.md lives
+storage: xmd.db          # local SQLite dedupe store (created automatically)
+digest_dir: digests      # where rendered .md files are written

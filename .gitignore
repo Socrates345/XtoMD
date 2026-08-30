@@ -1,0 +1,19 @@
+# local state — never commit
+sources.yaml
+sources/
+sources/*
+xmd.db
+digests/
+
+# leftover local state from the pre-rewrite app (rss40/, on `main`) — not
+# used by this tool, kept out of git if still present on disk
+rss40.db
+retention.yaml
+
+# python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
