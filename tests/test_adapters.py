@@ -83,6 +83,51 @@ def test_twitterapi_fetch(monkeypatch):
     assert items[0].source_type == "x"
 
 
+def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
+    """twitterapi.io doesn't distinguish a bare retweet from a quote-tweet:
+    a bare retweet's own `text` field carries X's auto-generated, truncated
+    "RT @author: text…" echo of the original, not real commentary — it must
+    not be kept as text/full_text, or the rendered body duplicates the 🔁
+    quoted line (see render.py's display_body caller)."""
+    from xmd.adapters import twitterapi as twitterapi_adapter
+
+    page = {
+        "status": "success",
+        "has_next_page": False,
+        "next_cursor": "",
+        "data": {
+            "tweets": [
+                {
+                    "url": "https://x.com/someone/status/4",
+                    "text": "RT @ruthbenghiat: The conversion of the GOP into an openly authoritarian party…",
+                    "createdAt": "Tue Dec 10 07:03:30 +0000 2024",
+                    "isReply": False,
+                    "retweeted_tweet": {
+                        "text": "The conversion of the GOP into an openly authoritarian party "
+                        "in its domestic and foreign policies is one of the biggest stories.",
+                        "author": {"userName": "ruthbenghiat"},
+                    },
+                },
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        twitterapi_adapter.httpx, "get", lambda *a, **kw: FakeJsonResponse(page)
+    )
+
+    items = twitterapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    item = items[0]
+    assert item.retweet_of_author == "ruthbenghiat"
+    assert item.text == "" and item.full_text == ""
+    assert item.display_body() == (
+        "🔁 Retweeted @ruthbenghiat: The conversion of the GOP into an openly "
+        "authoritarian party in its domestic and foreign policies is one of "
+        "the biggest stories."
+    )
+
+
 def test_twitterapi_fetch_falls_back_to_top_level_tweets(monkeypatch):
     """Defensive fallback in case the shape ever varies by endpoint/version."""
     from xmd.adapters import twitterapi as twitterapi_adapter

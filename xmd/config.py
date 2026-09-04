@@ -33,6 +33,7 @@ class Source:
     handle: str = ""  # X handle, no "@"
     platform: str = "x"  # "x" today; a future adapter would add "rss" etc.
     group: str = ""  # interest group from a `## header` in sources/x.md ("" = none)
+    priority: bool = False  # from a `| priority` field: sorts first within its section
 
 
 @dataclass
@@ -63,14 +64,15 @@ def _read_md_list(path: Path) -> list[dict]:
 
     - `## group` headers partition entries into interest groups, each
       becoming its own section in the rendered markdown.
-    - a legacy third `| priority` field, and a legacy `focus:`/`aim:` line
-      (from the old RSS4.0 format, back when an LLM recap read them), are
-      both tolerated and skipped, so an existing list needs no editing.
+    - a third `| priority` field marks a source as high-priority: its items
+      sort first within their section, ahead of non-priority sources. A
+      legacy `focus:`/`aim:` line (from the old RSS4.0 format, back when an
+      LLM recap read them) is tolerated and skipped.
 
         karpathy
 
         ## finance
-        DeItaone | Walter Bloomberg
+        DeItaone | Walter Bloomberg | priority
         unusual_whales
 
     Header detection runs before `#` comment stripping so `##` is never
@@ -89,7 +91,8 @@ def _read_md_list(path: Path) -> list[dict]:
             continue
         parts = [p.strip() for p in line.split("|")]
         handle, name = parts[0].lstrip("@"), (parts[1] if len(parts) > 1 else "")
-        entries.append({"handle": handle, "name": name, "group": group})
+        priority = len(parts) > 2 and parts[2].strip().lower() == "priority"
+        entries.append({"handle": handle, "name": name, "group": group, "priority": priority})
     return entries
 
 
@@ -128,6 +131,7 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         sources.append(Source(
             name=entry["name"] or f"@{handle}", type="twitterapi",
             handle=handle, platform="x", group=entry["group"],
+            priority=entry["priority"],
         ))
     if not sources:
         raise ValueError(f"no sources found — add handles to {x_md}")

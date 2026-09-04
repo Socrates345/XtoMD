@@ -22,8 +22,13 @@ sources/x.md ──► API ──► FeedItem ──► SQLite (dedupe)
   a local SQLite store (`xmd.db`), deduped by tweet URL. Nothing is ever
   purged — it's a personal archive, not a delivery queue.
 - **`xmd digest`** — renders everything in a time window to one markdown
-  file in `digests/`: full tweet text, retweets shown with a 🔁 line quoting
-  the original, images embedded as `![](remote-url)`. `--window since-run`
+  file in `digests/`: full tweet text, images embedded as
+  `![](remote-url)`. A stats line and, once there's more than one section, a
+  linked table of contents sit at the top so a long file can be jumped into
+  instead of scrolled through. Retweets sort after normal tweets within
+  their section and are collapsed into a single "🔁 Retweets — N items"
+  toggle per section — one click reveals all of them, while normal tweets
+  are always fully visible. `--window since-run`
   (default) covers everything stored since the last `xmd digest` call —
   filtered by when it was *fetched*, not when it was posted, so a digest
   run right after a fetch never comes up empty just because the tweets
@@ -63,6 +68,7 @@ version and exits.
 xmd fetch --loop            # keep fetching every 15 min, forever
 xmd fetch --loop 1800       # same, every 30 min
 xmd digest --window 24h     # everything posted in the last 24h, regardless of fetch history
+xmd digest --window since-run
 xmd --config work.yaml fetch --loop 300   # a second, differently-configured instance
 ```
 
@@ -71,6 +77,8 @@ xmd --config work.yaml fetch --loop 300   # a second, differently-configured ins
 - `sources/x.md`
 one handle per line, optional `| Display Name`, `#` comments allowed.
 `## group` headers split handles into sections in the output file.
+A third field, `| priority`, sorts that source's tweets first within its
+section, ahead of non-priority sources (e.g. `karpathy | | priority`).
 - `sources.yaml`
 
 

@@ -79,7 +79,8 @@ def _digest(config: Config, window: str) -> Path | None:
         return None
 
     label = "past 24h" if window == "24h" else "since last run"
-    markdown = build_markdown(items, now, label=label)
+    priority_sources = frozenset(s.name for s in config.sources if s.priority)
+    markdown = build_markdown(items, now, label=label, priority_sources=priority_sources)
     config.digest_dir.mkdir(parents=True, exist_ok=True)
     out_path = config.digest_dir / f"{now.strftime('%Y-%m-%d-%H%M')}.md"
     out_path.write_text(markdown, encoding="utf-8")
@@ -125,7 +126,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "sources":
         for s in config.sources:
             group = f" [{s.group}]" if s.group else ""
-            print(f"{s.name} -> @{s.handle}{group}")
+            priority = " (priority)" if s.priority else ""
+            print(f"{s.name} -> @{s.handle}{group}{priority}")
         return
 
     if args.command == "fetch":

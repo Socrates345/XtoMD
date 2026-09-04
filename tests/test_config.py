@@ -52,15 +52,16 @@ def test_groups_and_legacy_focus_lines_are_skipped(tmp_path):
     assert {s.handle for s in cfg.sources} == {"karpathy", "DeItaone", "unusual_whales", "paulg"}
 
 
-def test_legacy_priority_field_is_tolerated_and_ignored(tmp_path):
-    # old RSS4.0 lists used a third "| priority" field, meaningless here
-    # since every tweet already ships in full — must not break parsing
+def test_priority_field_marks_source_priority(tmp_path):
     path = _setup(
         tmp_path,
-        x_md="DeItaone | Walter Bloomberg | priority\nunusual_whales | | priority\n",
+        x_md="DeItaone | Walter Bloomberg | priority\nunusual_whales | | priority\nkarpathy\n",
     )
     cfg = load_config(path)
-    assert {s.handle for s in cfg.sources} == {"DeItaone", "unusual_whales"}
+    by_handle = {s.handle: s for s in cfg.sources}
+    assert by_handle["DeItaone"].priority is True
+    assert by_handle["unusual_whales"].priority is True
+    assert by_handle["karpathy"].priority is False
 
 
 def test_x_backend_defaults_to_twitterapi(tmp_path):

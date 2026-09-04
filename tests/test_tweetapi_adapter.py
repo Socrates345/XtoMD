@@ -121,6 +121,29 @@ def test_retweet_keeps_retweeter_comment_and_original_separately(monkeypatch):
     assert item.text == ""  # bare retweet, no added commentary
 
 
+def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
+    """Defensive: even though tweetapi.com's bare retweets are observed to
+    leave `text` empty (see test above), guard against the same RT-echo
+    quirk seen on twitterapi.io in case a live response ever carries it."""
+    _fake_calls(monkeypatch, [
+        _by_username(),
+        _tweets_page([
+            {
+                "id": "1", "text": "RT @orig: original content", "createdAt": "2026-07-08T06:00:00.000Z",
+                "author": {"username": "someone"},
+                "retweetedTweet": {"text": "original content", "author": {"username": "orig"}},
+            },
+        ]),
+    ])
+
+    items = tweetapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    item = items[0]
+    assert item.retweet_of_author == "orig"
+    assert item.text == ""  # RT-echo text, not real commentary
+
+
 def test_quote_tweet_keeps_commentary_and_original_separately(monkeypatch):
     _fake_calls(monkeypatch, [
         _by_username(),
