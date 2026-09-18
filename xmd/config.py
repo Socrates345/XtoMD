@@ -47,6 +47,7 @@ class Config:
     x_backend: str = "twitterapi"  # "twitterapi" (twitterapi.io) | "tweetapi" (tweetapi.com)
     x_api_key: str = ""  # twitterapi.io API key
     tweetapi_api_key: str = ""  # tweetapi.com API key
+    tweetapi_rate_limit_per_minute: int = 10  # tweetapi.com's request cap (free tier); raise to 60 on the paid plan
     storage: Path = field(default_factory=lambda: Path("xmd.db"))
     digest_dir: Path = field(default_factory=lambda: Path("digests"))
 
@@ -110,6 +111,7 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         raise ValueError(f"x.backend must be one of {X_BACKENDS}, got {x_backend!r}")
     x_api_key = x_cfg.get("api_key") or os.environ.get(X_API_KEY_ENV_VAR, "")
     tweetapi_api_key = x_cfg.get("tweetapi_api_key") or os.environ.get(TWEETAPI_API_KEY_ENV_VAR, "")
+    tweetapi_rate_limit_per_minute = int(x_cfg.get("tweetapi_rate_limit_per_minute", 10))
     active_x_api_key = tweetapi_api_key if x_backend == "tweetapi" else x_api_key
     if not active_x_api_key:
         env_var = TWEETAPI_API_KEY_ENV_VAR if x_backend == "tweetapi" else X_API_KEY_ENV_VAR
@@ -149,6 +151,7 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         x_backend=x_backend,
         x_api_key=x_api_key,
         tweetapi_api_key=tweetapi_api_key,
+        tweetapi_rate_limit_per_minute=tweetapi_rate_limit_per_minute,
         storage=Path(raw.get("storage", "xmd.db")),
         digest_dir=Path(raw.get("digest_dir", "digests")),
     )

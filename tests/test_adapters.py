@@ -128,6 +128,54 @@ def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
     )
 
 
+def test_twitterapi_quote_tweet_includes_quoted_content(monkeypatch):
+    """twitterapi.io's schema (unlike its title-prefixing) does distinguish a
+    quote tweet from a plain retweet: it nests the quoted post under
+    `quoted_tweet`, not `retweeted_tweet`. Without reading that field, a
+    quote-tweeted response (including someone quoting a *retweet* to comment
+    on it) would render with only the wrapper's own commentary and none of
+    the content it's responding to."""
+    from xmd.adapters import twitterapi as twitterapi_adapter
+
+    page = {
+        "status": "success",
+        "has_next_page": False,
+        "next_cursor": "",
+        "data": {
+            "tweets": [
+                {
+                    "url": "https://x.com/someone/status/5",
+                    "text": "wild that this is even a debate",
+                    "createdAt": "Tue Dec 10 07:04:30 +0000 2024",
+                    "isReply": False,
+                    "retweeted_tweet": None,
+                    "quoted_tweet": {
+                        "text": "original post being quoted",
+                        "author": {"userName": "orig"},
+                    },
+                },
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        twitterapi_adapter.httpx, "get", lambda *a, **kw: FakeJsonResponse(page)
+    )
+
+    items = twitterapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    item = items[0]
+    assert item.retweet_of_author == "orig"
+    assert item.retweet_of_text == "original post being quoted"
+    assert item.text == "wild that this is even a debate"
+    assert item.display_body() == (
+        "wild that this is even a debate\n\n🔁 Retweeted @orig: original post being quoted"
+    )
+    # quote tweets aren't title-prefixed "RT @…" — they carry genuine
+    # commentary and must not be dropped by config.drop_retweets
+    assert item.title == "wild that this is even a debate"
+
+
 def test_twitterapi_fetch_falls_back_to_top_level_tweets(monkeypatch):
     """Defensive fallback in case the shape ever varies by endpoint/version."""
     from xmd.adapters import twitterapi as twitterapi_adapter

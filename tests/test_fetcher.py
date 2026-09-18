@@ -39,8 +39,12 @@ def test_fetch_all_override_widens_lookback_without_changing_config(monkeypatch)
 def test_fetch_all_routes_to_tweetapi_backend_when_configured(monkeypatch):
     seen = {}
 
-    def fake_tweetapi_fetch(source, api_key, max_items, max_age_hours=48, fallback_latest=True):
+    def fake_tweetapi_fetch(
+        source, api_key, max_items, max_age_hours=48, fallback_latest=True,
+        rate_limit_per_minute=0,
+    ):
         seen["api_key"] = api_key
+        seen["rate_limit_per_minute"] = rate_limit_per_minute
         return []
 
     def boom(*a, **kw):
@@ -50,9 +54,22 @@ def test_fetch_all_routes_to_tweetapi_backend_when_configured(monkeypatch):
     monkeypatch.setattr(fetcher.twitterapi_adapter, "fetch", boom)
     config = Config(
         sources=[_x_source()], x_backend="tweetapi", tweetapi_api_key="tw-k", x_api_key="tw-io-k",
+        tweetapi_rate_limit_per_minute=42,
     )
     asyncio.run(fetcher.fetch_all(config))
     assert seen["api_key"] == "tw-k"  # the active backend's own key, not twitterapi.io's
+    assert seen["rate_limit_per_minute"] == 42
+
+
+def test_fetch_all_does_not_pass_rate_limit_to_twitterapi_backend(monkeypatch):
+    """twitterapi.io's fetch() has no rate_limit_per_minute parameter —
+    passing it unconditionally would break the default (twitterapi.io) path."""
+    def fake_fetch(source, api_key, max_items, max_age_hours=48, fallback_latest=True):
+        return []
+
+    monkeypatch.setattr(fetcher.twitterapi_adapter, "fetch", fake_fetch)
+    config = Config(sources=[_x_source()], x_api_key="k")
+    asyncio.run(fetcher.fetch_all(config))  # must not raise TypeError
 
 
 def test_fetch_all_defaults_to_twitterapi_backend(monkeypatch):

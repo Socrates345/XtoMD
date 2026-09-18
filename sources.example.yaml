@@ -17,6 +17,11 @@ x:
   api_key: ""             # twitterapi.io key — or set XMD_TWITTERAPI_KEY
   tweetapi_api_key: ""    # tweetapi.com key — or set XMD_TWEETAPI_KEY (only
                           # needed when backend: tweetapi)
+  tweetapi_rate_limit_per_minute: 60  # tweetapi.com's request cap (only
+                          # applies when backend: tweetapi) — paces requests
+                          # so concurrent sources don't trip 429s; free tier
+                          # is 10/min as of writing, raise to 60 once you're
+                          # on the paid plan
 
 fetch:
   max_per_source: 15     # cap items kept per handle per fetch (0 = unlimited,

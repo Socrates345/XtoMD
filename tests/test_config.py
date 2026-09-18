@@ -101,6 +101,20 @@ def test_tweetapi_key_from_env(tmp_path, monkeypatch):
     assert load_config(path).tweetapi_api_key == "env-secret"
 
 
+def test_tweetapi_rate_limit_defaults_to_10(tmp_path):
+    path = _setup(tmp_path, yaml_text="x:\n  backend: tweetapi\n  tweetapi_api_key: tw-secret\n")
+    assert load_config(path).tweetapi_rate_limit_per_minute == 10
+
+
+def test_tweetapi_rate_limit_from_yaml(tmp_path):
+    path = _setup(
+        tmp_path,
+        yaml_text="x:\n  backend: tweetapi\n  tweetapi_api_key: tw-secret\n"
+        "  tweetapi_rate_limit_per_minute: 60\n",
+    )
+    assert load_config(path).tweetapi_rate_limit_per_minute == 60
+
+
 def test_missing_api_key_raises(tmp_path):
     path = _setup(tmp_path, yaml_text="")
     with pytest.raises(ValueError, match="api_key"):

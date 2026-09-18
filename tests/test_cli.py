@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from xmd.cli import SINCE_RUN_MAX_HOURS, _digest, _fetch_to_store
+from xmd.cli import PROGRESS_BAR_WIDTH, SINCE_RUN_MAX_HOURS, _digest, _fetch_to_store, _render_progress
 from xmd.config import Config, Source
 from xmd.models import FeedItem
 from xmd.store import Store
@@ -17,10 +17,47 @@ def _config(tmp_path, **kw) -> Config:
     )
 
 
+def test_fetch_to_store_forwards_progress_callback(tmp_path, monkeypatch):
+    from xmd import cli as cli_module
+
+    seen = {}
+
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+        seen["progress"] = progress
+        return []
+
+    monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
+    marker = lambda done, total: None
+    asyncio.run(_fetch_to_store(_config(tmp_path), progress=marker))
+    assert seen["progress"] is marker
+
+
+def test_render_progress_fills_bar_proportionally(capsys):
+    _render_progress(5, 10)
+    out = capsys.readouterr().out
+    assert out.startswith("\rfetching sources [")
+    assert "5/10" in out
+    filled = out.count("#")
+    assert filled == PROGRESS_BAR_WIDTH // 2
+    assert not out.endswith("\n")  # not done yet -> no trailing newline
+
+
+def test_render_progress_appends_newline_when_done(capsys):
+    _render_progress(10, 10)
+    out = capsys.readouterr().out
+    assert out.endswith("\n")
+    assert out.count("#") == PROGRESS_BAR_WIDTH
+
+
+def test_render_progress_ignores_zero_total(capsys):
+    _render_progress(0, 0)
+    assert capsys.readouterr().out == ""
+
+
 def test_fetch_to_store_dedupes_and_records_last_run(tmp_path, monkeypatch):
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
         return [FeedItem(source="@karpathy", source_type="x", title="t", url="https://x.com/k/1")]
 
     monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
@@ -42,7 +79,7 @@ def test_fetch_to_store_widens_lookback_after_a_long_gap(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
         seen["override"] = x_max_age_hours_override
         return []
 
@@ -63,7 +100,7 @@ def test_fetch_to_store_no_override_on_first_run(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
         seen["override"] = x_max_age_hours_override
         return []
 

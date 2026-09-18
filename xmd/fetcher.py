@@ -34,7 +34,7 @@ MAX_CONCURRENCY = 10
 
 async def fetch_all(
     config: Config,
-    progress: Callable[[str], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
     x_max_age_hours_override: int | None = None,
 ) -> list[FeedItem]:
     """Fetch every source concurrently (bounded). A failing source logs a
@@ -59,11 +59,16 @@ async def fetch_all(
                 # whatever the backend offers per page (~20/handle)
                 max_items = config.max_per_source * 2 or 100
                 adapter = tweetapi_adapter if config.x_backend == "tweetapi" else twitterapi_adapter
+                fetch_kwargs = dict(max_age_hours=max_age_hours, fallback_latest=True)
+                if config.x_backend == "tweetapi":
+                    # only tweetapi.com is known to need pacing (see
+                    # adapters/tweetapi.py's _RateLimiter) — twitterapi.io
+                    # relies on _get()'s retry-on-429 backoff instead
+                    fetch_kwargs["rate_limit_per_minute"] = config.tweetapi_rate_limit_per_minute
                 batch = await asyncio.to_thread(
                     adapter.fetch,
                     source, config.active_x_api_key, max_items,
-                    max_age_hours=max_age_hours,
-                    fallback_latest=True,
+                    **fetch_kwargs,
                 )
             log.info(
                 "source %s: %d item(s) in %.1fs",
@@ -79,7 +84,7 @@ async def fetch_all(
         finally:
             done += 1
             if progress:
-                progress(f"fetching sources... {done}/{total}")
+                progress(done, total)
 
     results = await asyncio.gather(*(one(s) for s in config.sources))
     items = [item for batch in results for item in batch]

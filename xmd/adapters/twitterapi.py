@@ -41,18 +41,22 @@ def _title(tweet: dict) -> str:
 
 
 def _retweet_of(tweet: dict) -> tuple[str, str]:
-    """(original author, original text) when `tweet` wraps a retweet, else
-    ("", ""). Kept separate from FeedItem.text/.full_text (the wrapper's own
-    text — the retweeter's added comment, if any) so a quote-tweet's comment
-    and the original post it's quoting both survive instead of collapsing
-    into one flattened "RT @author: text" string."""
-    retweeted = tweet.get("retweeted_tweet")
-    if not retweeted:
+    """(original author, original text) when `tweet` wraps a retweet or a
+    quote tweet, else ("", ""). twitterapi.io's schema, unlike its `_title()`
+    prefixing, does distinguish the two: a plain repost nests under
+    `retweeted_tweet`, a quote tweet (commentary attached on top of an
+    embedded post — including a quote of someone else's retweet) nests under
+    `quoted_tweet`. Both map onto FeedItem's single retweet_of_author/
+    retweet_of_text pair so the quoted/retweeted content always renders
+    alongside the wrapper's own added comment (see display_body()) instead of
+    the comment showing with no context for what it's responding to."""
+    wrapped = tweet.get("retweeted_tweet") or tweet.get("quoted_tweet")
+    if not wrapped:
         return "", ""
-    author = (retweeted.get("author") or {}).get("userName", "")
+    author = (wrapped.get("author") or {}).get("userName", "")
     if not author:
         return "", ""
-    original = " ".join(str(retweeted.get("text", "")).split())
+    original = " ".join(str(wrapped.get("text", "")).split())
     return author, original
 
 

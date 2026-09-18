@@ -7,6 +7,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 from . import __version__
 from .config import Config, load_config
@@ -16,9 +17,23 @@ from .store import Store
 
 DEFAULT_LOOP_SECONDS = 900  # 15 min
 SINCE_RUN_MAX_HOURS = 168  # 7 days -- AFK-gap cap, so a long absence can't blow up API cost
+PROGRESS_BAR_WIDTH = 30
 
 
-async def _fetch_to_store(config: Config) -> int:
+def _render_progress(done: int, total: int) -> None:
+    """Plain in-place progress bar (\\r, no dependency) — fetches can now
+    take minutes under tweetapi.com's rate limit, so a silent hang until
+    the final `fetched: N new item(s)` line is a bad default."""
+    if total <= 0:
+        return
+    filled = int(PROGRESS_BAR_WIDTH * min(done / total, 1.0))
+    bar = "#" * filled + "-" * (PROGRESS_BAR_WIDTH - filled)
+    end = "\n" if done >= total else ""
+    sys.stdout.write(f"\rfetching sources [{bar}] {done}/{total}{end}")
+    sys.stdout.flush()
+
+
+async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] | None = None) -> int:
     """Fetch every source and store new items. If the previous run was
     longer ago than `config.x_max_age_hours` covers, widen this fetch's
     lookback to close the gap (capped at SINCE_RUN_MAX_HOURS) — otherwise
@@ -36,7 +51,7 @@ async def _fetch_to_store(config: Config) -> int:
         if gap_hours > config.x_max_age_hours:
             override = int(min(gap_hours, SINCE_RUN_MAX_HOURS)) + 1
 
-    items = await fetch_all(config, x_max_age_hours_override=override)
+    items = await fetch_all(config, progress=progress, x_max_age_hours_override=override)
     store = Store(config.storage)
     try:
         new = store.add_items(items)
@@ -131,14 +146,15 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "fetch":
+        progress = _render_progress if sys.stdout.isatty() else None
         if args.loop:
             log = logging.getLogger("xmd")
             log.info("looping fetch every %ss — Ctrl+C to stop", args.loop)
             while True:
-                new = asyncio.run(_fetch_to_store(config))
+                new = asyncio.run(_fetch_to_store(config, progress=progress))
                 print(f"fetched: {new} new item(s)")
                 time.sleep(args.loop)
-        new = asyncio.run(_fetch_to_store(config))
+        new = asyncio.run(_fetch_to_store(config, progress=progress))
         print(f"fetched: {new} new item(s)")
         return
 

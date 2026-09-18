@@ -257,3 +257,105 @@ def test_retries_on_429(monkeypatch):
     )
     assert [i.title for i in items] == ["made it through"]
     assert len(calls) == 3  # one retried by-username call + one tweets call
+
+
+def test_retries_on_403(monkeypatch):
+    """A 403 on /user/by-username has been observed in practice even while
+    pacing exactly at the documented per-minute cap — treated as
+    retryable, the same as 429, rather than failing the source outright."""
+    calls = []
+    responses = iter([
+        FakeJsonResponse({}, status_code=403),
+        FakeJsonResponse(_by_username()),
+        FakeJsonResponse(_tweets_page([
+            {"id": "1", "text": "made it through", "createdAt": "2026-07-08T06:00:00.000Z",
+             "author": {"username": "someone"}},
+        ])),
+    ])
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        return next(responses)
+
+    monkeypatch.setattr(tweetapi_adapter.httpx, "get", fake_get)
+    monkeypatch.setattr(tweetapi_adapter.time, "sleep", lambda *_: None)
+
+    items = tweetapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    assert [i.title for i in items] == ["made it through"]
+    assert len(calls) == 3  # one retried by-username call + one tweets call
+
+
+def test_gives_up_after_max_retries_on_403(monkeypatch):
+    monkeypatch.setattr(
+        tweetapi_adapter.httpx, "get",
+        lambda *a, **kw: FakeJsonResponse({}, status_code=403),
+    )
+    monkeypatch.setattr(tweetapi_adapter.time, "sleep", lambda *_: None)
+
+    with pytest.raises(RuntimeError, match="403"):
+        tweetapi_adapter.fetch(Source("@someone", "twitterapi", handle="someone"), api_key="k")
+
+
+def test_rate_limiter_paces_calls_with_safety_margin(monkeypatch):
+    """_RateLimiter spaces calls 60/per_minute * RATE_LIMIT_SAFETY_MARGIN
+    seconds apart — the first call goes through immediately, each one
+    after waits for its slot."""
+    clock = [0.0]
+    monkeypatch.setattr(tweetapi_adapter.time, "monotonic", lambda: clock[0])
+
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(tweetapi_adapter.time, "sleep", fake_sleep)
+
+    limiter = tweetapi_adapter._RateLimiter()
+    limiter.configure(60)  # nominal 1 request/second
+    limiter.wait()
+    limiter.wait()
+    limiter.wait()
+
+    expected = 60.0 / 60 * tweetapi_adapter.RATE_LIMIT_SAFETY_MARGIN
+    assert slept == [expected, expected]
+
+
+def test_rate_limiter_disabled_at_zero(monkeypatch):
+    monkeypatch.setattr(
+        tweetapi_adapter.time, "sleep",
+        lambda s: (_ for _ in ()).throw(AssertionError("should never sleep when disabled")),
+    )
+    limiter = tweetapi_adapter._RateLimiter()
+    limiter.configure(0)
+    for _ in range(5):
+        limiter.wait()  # must return immediately every time
+
+
+def test_fetch_paces_every_http_call(monkeypatch):
+    """fetch() configures the shared limiter from rate_limit_per_minute and
+    _get() waits on it before every call — resolve-id plus each tweets
+    page, not just the first request of a fetch."""
+    configured = []
+    monkeypatch.setattr(tweetapi_adapter._rate_limiter, "configure", configured.append)
+    waits = []
+    monkeypatch.setattr(tweetapi_adapter._rate_limiter, "wait", lambda: waits.append(1))
+
+    _fake_calls(monkeypatch, [
+        _by_username(),
+        _tweets_page([
+            {"id": "1", "text": "hello from tweetapi.com", "createdAt": "2026-07-08T06:00:00.000Z",
+             "author": {"username": "someone"}},
+        ]),
+    ])
+
+    items = tweetapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k",
+        max_age_hours=0, rate_limit_per_minute=10,
+    )
+
+    assert configured == [10]
+    assert len(waits) == 2  # resolve_user_id + the one tweets page
+    assert [i.title for i in items] == ["hello from tweetapi.com"]

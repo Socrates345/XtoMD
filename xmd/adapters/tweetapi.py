@@ -28,6 +28,7 @@ before relying on this backend for real delivery.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -42,6 +43,53 @@ BASE_URL = "https://api.tweetapi.com/tw-v2"
 PAGE_SIZE = 20  # observed against a live call; undocumented
 MAX_RETRIES = 4  # tw-v2 endpoints return no Retry-After/X-RateLimit-* headers — back off blind
 RETRY_BACKOFF = 2.0  # seconds; doubles each retry (1x, 2x, 4x, 8x)
+RETRYABLE_STATUS_CODES = (429, 403)  # a 403 was observed on /user/by-username even while
+# pacing exactly at the documented per-minute cap (see _RateLimiter below) — Cloudflare's
+# edge in front of tweetapi.com likely enforces its own, stricter/burst-sensitive rate
+# limit distinct from the plan's advertised average, and returns 403 rather than 429 for
+# it (a common Cloudflare rate-limiting-rule default). Backing off and retrying gives a
+# transient edge-level block a chance to clear instead of failing the whole source.
+
+# Multiplicative cushion applied on top of the strict 60/per_minute spacing (see
+# _RateLimiter.configure): trades a bit of throughput for headroom against exactly the
+# 403 above, since pacing at the exact nominal rate still isn't safe in practice.
+RATE_LIMIT_SAFETY_MARGIN = 1.25
+
+
+class _RateLimiter:
+    """Thread-safe request pacer, shared across every concurrent fetch().
+
+    fetcher.py runs up to MAX_CONCURRENCY sources at once via
+    asyncio.to_thread, and each source issues 2+ calls here (resolve-id plus
+    one per tweets page) — without pacing, that blows straight through
+    tweetapi.com's per-minute cap (10/min on the free tier as of writing)
+    well before the retry-on-429/403 backoff in _get() ever gets a chance to
+    help. Spacing every call evenly (with RATE_LIMIT_SAFETY_MARGIN headroom)
+    keeps the steady-state rate under the cap instead of bursting then
+    backing off."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._interval = 0.0  # seconds between requests; 0 = unlimited
+        self._next_slot = 0.0
+
+    def configure(self, per_minute: int) -> None:
+        with self._lock:
+            self._interval = 60.0 / per_minute * RATE_LIMIT_SAFETY_MARGIN if per_minute > 0 else 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            if self._interval <= 0:
+                return
+            now = time.monotonic()
+            slot = max(now, self._next_slot)
+            self._next_slot = slot + self._interval
+        sleep_for = slot - time.monotonic()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+
+_rate_limiter = _RateLimiter()
 
 # Cloudflare's bot fingerprinting (error code 1010) blocks requests with no
 # browser-like User-Agent before they ever reach the API.
@@ -135,11 +183,15 @@ def _headers(api_key: str) -> dict:
 
 
 def _get(url: str, params: dict, api_key: str, timeout: float) -> dict:
-    """GET with retry-on-429, mirroring adapters/twitterapi.py's _get()."""
+    """GET with retry-on-429/403 (see RETRYABLE_STATUS_CODES), mirroring
+    adapters/twitterapi.py's _get() — paced by _rate_limiter first so
+    concurrent sources don't blow through tweetapi.com's per-minute cap in
+    the first place."""
     delay = RETRY_BACKOFF
     for attempt in range(MAX_RETRIES + 1):
+        _rate_limiter.wait()
         resp = httpx.get(url, params=params, headers=_headers(api_key), timeout=timeout)
-        if resp.status_code != 429 or attempt == MAX_RETRIES:
+        if resp.status_code not in RETRYABLE_STATUS_CODES or attempt == MAX_RETRIES:
             resp.raise_for_status()
             return resp.json()
         time.sleep(delay)
@@ -162,15 +214,22 @@ def fetch(
     timeout: float = 20.0,
     max_age_hours: int = 48,
     fallback_latest: bool = True,
+    rate_limit_per_minute: int = 0,
 ) -> list[FeedItem]:
     """Same contract as adapters/twitterapi.py's fetch(): newest-first,
     stops paginating past max_age_hours, falls back to the single newest
-    tweet when the cutoff would otherwise leave nothing for this source."""
+    tweet when the cutoff would otherwise leave nothing for this source.
+
+    `rate_limit_per_minute` (0 = unlimited) paces every HTTP call this fetch
+    makes — and every concurrent fetch() call, since the limiter is shared
+    module state — to stay under tweetapi.com's per-minute request cap; see
+    x.tweetapi_rate_limit_per_minute in sources.yaml."""
     if not api_key:
         raise ValueError(
             "x.backend is 'tweetapi' but x.tweetapi_api_key (or XMD_TWEETAPI_KEY) "
             "is not set"
         )
+    _rate_limiter.configure(rate_limit_per_minute)
 
     cutoff = (
         datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
