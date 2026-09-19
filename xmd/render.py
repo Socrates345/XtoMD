@@ -8,27 +8,38 @@ below all of that section's normal tweets and are collapsed into a single
 `<details>` toggle (one click reveals every retweet in the section, rather
 than them consuming scroll space alongside normal tweets); normal tweets are
 never collapsed — always fully visible, since per-item collapsing tested
-worse ("too many clicks"). `| priority` sources sort first within both the
-normal and retweet bands — looked up live by source name against
-sources/x.md at render time (not stored on the item), so re-marking a source
-as priority reorders even already-fetched tweets on the next digest, no
-re-fetch required. A stats line and, for a multi-section digest, a table of
-contents linking into each section (via an explicit `<a id>` anchor, not
-relying on each renderer's own heading-slug rules) sit at the top so a long
-file can be jumped into instead of scrolled through. Deliberately uncapped
+worse ("too many clicks"). The retweet items inside the toggle are written as
+HTML, not markdown, with no blank line anywhere between `<details>` and
+`</details>`: Obsidian doesn't parse markdown inside an HTML block (it shows
+the raw `####` / `![]()` source), so the content has to be HTML. That
+renders in VS Code / GitHub and in Obsidian's Reading view; Obsidian's Live
+Preview doesn't render `<details>` at all and shows the source instead — the
+known limit of a `<details>` toggle (an Obsidian `> [!info]-` callout is the
+alternative that folds in both of its views, but VS Code can't fold it).
+`| priority` sources sort first within both the normal and retweet bands —
+looked up live by source name against sources/x.md at render time (not
+stored on the item), so re-marking a source as priority reorders even
+already-fetched tweets on the next digest, no re-fetch required. A stats
+line and, for a multi-section digest, a table of
+contents linking into each section sit at the top so a long file can be
+jumped into instead of scrolled through. The links target the heading's own
+text (see `_fragment`), not a slug of it. Deliberately uncapped
 and full text — there's no link-only summary variant, because without an
 LLM step there's nothing to summarize down to.
 """
 
 from __future__ import annotations
 
+import html
 import re
 from datetime import datetime, timezone
 from itertools import groupby
+from urllib.parse import quote
 
 from .models import FeedItem
 
 PLATFORM_LABELS = {"x": "X"}
+_URL = re.compile(r"https?://[^\s<>\"]+")
 
 
 def section_key_for(platform: str, group: str) -> str:
@@ -46,12 +57,15 @@ def section_label(key: str) -> str:
     return f"{label} / {group}" if group else label
 
 
-def _slug(label: str) -> str:
-    """"X" -> "x", "X / finance" -> "x-finance": a stable, renderer-agnostic
-    anchor id. Heading auto-slug rules (what you'd get from just linking to
-    "#x--finance") vary across GitHub/VS Code preview/Obsidian, especially
-    for punctuation like "/" — an explicit `<a id>` anchor sidesteps that."""
-    return re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "section"
+def _fragment(label: str) -> str:
+    """The `#…` target of a section's contents link: the heading's own text,
+    percent-encoded ("X / finance" -> "X%20/%20finance"). Viewers resolve a
+    heading link in different ways, and this one string serves both: Obsidian
+    matches it against heading *text* (it ignores slugs and HTML ids), while
+    a browser-based preview like VS Code's hands it to the browser, which
+    matches the decoded text against an element id — the `<a id>` written
+    above each section heading carries exactly that text."""
+    return quote(label, safe="/")
 
 
 def _count(n: int, word: str) -> str:
@@ -103,19 +117,65 @@ def _item_block(item: FeedItem) -> list[str]:
     return lines
 
 
-def _render_items(items: list[FeedItem], priority_sources: frozenset[str]) -> list[str]:
+def _html_text(text: str) -> str:
+    """HTML-escape `text` and turn bare URLs into links. Markdown renderers
+    autolink bare URLs on their own, raw HTML doesn't — without this a
+    retweet's t.co links would stop being clickable inside the toggle."""
+    out: list[str] = []
+    pos = 0
+    for m in _URL.finditer(text):
+        url = m.group()
+        # trailing sentence punctuation, and a ")" with no "(" to match, belong
+        # to the prose around the URL, not the URL — same rule as GFM autolinks
+        while url and (url[-1] in ".,;:!?" or (url[-1] == ")" and url.count(")") > url.count("("))):
+            url = url[:-1]
+        out.append(html.escape(text[pos : m.start()]))
+        out.append(f'<a href="{html.escape(url)}">{html.escape(url)}</a>')
+        pos = m.start() + len(url)
+    out.append(html.escape(text[pos:]))
+    return "".join(out)
+
+
+def _item_html(item: FeedItem) -> list[str]:
+    """`_item_block`'s HTML twin, for inside the `<details>` retweet toggle:
+    same heading content (source, stable anchor, link, date), body and
+    images, but as tags. Never emits a blank line — one would end the HTML
+    block early and leave the rest as markdown-inside-HTML, which is what
+    this exists to avoid. Text is escaped, so a tweet can't inject tags
+    (e.g. a stray `</details>`) into the block."""
+    heading = (
+        f"<h4>{html.escape(item.source)} <!-- item:{item.id} --> "
+        f'<a href="{html.escape(item.url)}">Post Link</a>'
+    )
+    if item.published:
+        heading += f" · {item.published.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC"
+    lines = [heading + "</h4>"]
+    for paragraph in re.split(r"\n\s*\n", item.display_body()):
+        text = _html_text(paragraph.strip())
+        if text:
+            lines.append("<p>" + text.replace("\n", "<br>\n") + "</p>")
+    if item.images:
+        lines.append("<p>" + "\n".join(f'<img src="{html.escape(i)}">' for i in item.images) + "</p>")
+    return lines
+
+
+def _render_items(
+    items: list[FeedItem], priority_sources: frozenset[str], as_html: bool = False
+) -> list[str]:
     """Item blocks for a flat, already-partitioned list of items — grouped
     by source (priority first, alphabetical otherwise), oldest-first within
-    a source, "---"-separated. Shared by the normal-tweets band and the
-    collapsed retweets band within a section."""
+    a source, "---"-separated. Shared by the normal-tweets band (markdown)
+    and the collapsed retweets band within a section (`as_html`: tags and
+    `<hr>` separators, with no blank lines — see `_item_html`)."""
+    block, separator = (_item_html, ["<hr>"]) if as_html else (_item_block, ["---", ""])
     lines: list[str] = []
     first = True
     for _source, batch in _grouped_chronological(items, priority_sources):
         for item in batch:
             if not first:
-                lines += ["---", ""]
+                lines += separator
             first = False
-            lines += _item_block(item)
+            lines += block(item)
     return lines
 
 
@@ -140,12 +200,12 @@ def build_markdown(
     if len(sections) > 1:
         for key, sec_items in sections:
             sec_label = section_label(key)
-            lines.append(f"- [{sec_label}](#{_slug(sec_label)}) — {_count(len(sec_items), 'item')}")
+            lines.append(f"- [{sec_label}](#{_fragment(sec_label)}) — {_count(len(sec_items), 'item')}")
         lines.append("")
 
     for key, sec_items in sections:
         sec_label = section_label(key)
-        lines.append(f'<a id="{_slug(sec_label)}"></a>')
+        lines.append(f'<a id="{html.escape(sec_label)}"></a>')
         lines.append(f"## {sec_label}")
         lines.append("")
 
@@ -159,8 +219,7 @@ def build_markdown(
                 lines += ["---", ""]
             lines.append("<details>")
             lines.append(f"<summary>🔁 Retweets — {_count(len(retweets), 'item')}</summary>")
-            lines.append("")
-            lines += _render_items(retweets, priority_sources)
+            lines += _render_items(retweets, priority_sources, as_html=True)
             lines.append("</details>")
             lines.append("")
     return "\n".join(lines)

@@ -1,4 +1,7 @@
+import re
 from datetime import datetime, timezone
+from html import unescape
+from urllib.parse import unquote
 
 from xmd.models import FeedItem
 from xmd.render import build_markdown
@@ -139,8 +142,8 @@ def test_toc_lists_sections_with_item_counts_when_multiple_sections():
     ]
     md = build_markdown(items, NOW)
     assert "**2 items · 1 source**" in md
-    assert "- [X](#x) — 1 item" in md
-    assert "- [X / finance](#x-finance) — 1 item" in md
+    assert "- [X](#X) — 1 item" in md
+    assert "- [X / finance](#X%20/%20finance) — 1 item" in md
 
 
 def test_single_section_digest_has_stats_line_but_no_toc_bullets():
@@ -150,16 +153,39 @@ def test_single_section_digest_has_stats_line_but_no_toc_bullets():
     assert "- [" not in md  # nothing to jump between with only one section
 
 
-def test_section_anchor_ids_are_slugified_and_match_toc_links():
+def _toc_targets_resolve(md: str) -> None:
+    """Every contents link must resolve both ways a viewer might try: Obsidian
+    matches the decoded fragment against a heading's text, a browser preview
+    (VS Code) matches it against an element id."""
+    fragments = [unquote(f) for f in re.findall(r"^- \[[^\n]*?\]\(#(\S+?)\) — ", md, re.M)]
+    headings = re.findall(r"^## (.+)$", md, re.M)
+    ids = [unescape(i) for i in re.findall(r'<a id="([^"]*)"></a>', md)]
+    assert fragments and sorted(fragments) == sorted(headings) == sorted(ids)
+
+
+def test_section_link_targets_match_heading_text_and_anchor_id():
     items = [
         _tweet(1, "oil hits $120", group="finance"),
         _tweet(2, "a general tweet"),
     ]
     md = build_markdown(items, NOW)
-    assert '<a id="x"></a>' in md
-    assert '<a id="x-finance"></a>' in md
-    assert "[X](#x)" in md
-    assert "[X / finance](#x-finance)" in md
+    assert '<a id="X"></a>\n## X\n' in md
+    assert '<a id="X / finance"></a>\n## X / finance\n' in md
+    _toc_targets_resolve(md)
+
+
+def test_section_link_targets_survive_awkward_group_names():
+    items = [
+        _tweet(1, "a", group='AI & ML (beta) "quoted" 100%'),
+        _tweet(2, "b", group="Ünïcode 日本"),
+        _tweet(3, "c"),
+    ]
+    md = build_markdown(items, NOW)
+    _toc_targets_resolve(md)
+    # a link destination with no raw space or parenthesis, so it parses as one link
+    assert "(#X / AI" not in md
+    assert "[X / AI & ML (beta) \"quoted\" 100%](#X%20/%20AI%20%26%20ML%20%28beta%29%20%22quoted%22%20100%25)" in md
+    assert '<a id="X / AI &amp; ML (beta) &quot;quoted&quot; 100%"></a>' in md
 
 
 def test_retweets_collapsed_into_one_details_block_per_section():
@@ -198,3 +224,86 @@ def test_retweets_collapsed_into_one_details_block_per_section():
     # both retweets live inside the single collapsed block
     assert md.index("retweet one text") > details_start
     assert md.index("retweet two text") > details_start
+
+
+def _retweet(n: int, source: str, original: str, comment: str = "", group: str = "") -> FeedItem:
+    return FeedItem(
+        source=source, source_type="x", title=f"RT @orig: {original}"[:60],
+        url=f"https://x.com/{source.lstrip('@')}/status/{n}",
+        published=datetime(2026, 7, 8, 5, n, tzinfo=timezone.utc),
+        full_text=comment, retweet_of_author="orig", retweet_of_text=original, group=group,
+        images=[f"https://pbs.twimg.com/media/R{n}.jpg"],
+    )
+
+
+def _details_blocks(md: str) -> list[str]:
+    start = 0
+    blocks = []
+    while (i := md.find("<details>", start)) != -1:
+        end = md.index("</details>", i) + len("</details>")
+        blocks.append(md[i:end])
+        start = end
+    return blocks
+
+
+def test_retweet_toggle_is_one_html_block_with_no_markdown_inside():
+    """Markdown inside an HTML block isn't parsed by every viewer (Obsidian
+    shows the raw `####` / `![]()` source), and a blank line is what makes a
+    renderer stop treating the rest as HTML — so the toggle's content must be
+    HTML throughout, with no blank line from <details> to </details>."""
+    md = build_markdown(
+        [_tweet(1, "a plain tweet"), _retweet(1, "@ccc", "first"), _retweet(2, "@ddd", "second")],
+        NOW,
+    )
+    (block,) = _details_blocks(md)
+
+    assert "\n\n" not in block
+    for markdown_syntax in ("####", "![](", "](http", "\n---"):
+        assert markdown_syntax not in block
+    first = _retweet(1, "@ccc", "first")
+    assert (
+        f'<h4>@ccc <!-- item:{first.id} --> <a href="https://x.com/ccc/status/1">Post Link</a>'
+        " · 2026-07-08 05:01 UTC</h4>"
+    ) in block
+    assert '<img src="https://pbs.twimg.com/media/R1.jpg">' in block
+    assert block.count("<hr>") == 1  # between the two retweets, not around them
+    assert md.endswith("</details>\n")  # the blank line that closes the HTML block
+
+
+def test_content_after_retweet_toggle_is_unaffected():
+    md = build_markdown(
+        [
+            _tweet(1, "a plain tweet"),
+            _retweet(1, "@ccc", "first"),
+            _tweet(2, "finance tweet", group="finance"),
+            _retweet(2, "@ddd", "second", group="finance"),
+        ],
+        NOW,
+    )
+    first_block, second_block = _details_blocks(md)
+    # the next section's anchor + heading sit after a blank line, outside the toggle
+    assert f"{first_block}\n\n<a id=\"X / finance\"></a>\n## X / finance\n" in md
+    assert "#### @someone" in md[md.index("## X / finance") : md.index(second_block)]
+
+
+def test_retweet_toggle_escapes_tweet_text_and_keeps_urls_clickable():
+    hostile = _retweet(
+        1, "@r&d", 'x<y && </details> <script>alert(1)</script> "q" — see https://t.co/abc. and '
+        "(https://example.com/a?x=1&y=2), or https://en.wikipedia.org/wiki/Foo_(bar)",
+        comment="first paragraph\n\n \nsecond paragraph",
+    )
+    md = build_markdown([hostile], NOW)
+    (block,) = _details_blocks(md)
+
+    assert md.count("</details>") == 1  # the tweet's own </details> can't close the toggle early
+    assert "<script>" not in md
+    assert "&lt;script&gt;" in block and "x&lt;y &amp;&amp; &lt;/details&gt;" in block
+    assert "<h4>@r&amp;d " in block
+    # blank/whitespace-only lines between a comment's paragraphs never reach the block
+    assert "\n\n" not in block
+    assert "<p>first paragraph</p>\n<p>second paragraph</p>" in block
+    # bare URLs are linked like a markdown renderer would; trailing punctuation and
+    # an unbalanced ")" stay outside the link, a balanced one stays inside
+    assert '<a href="https://t.co/abc">https://t.co/abc</a>. and' in block
+    assert '(<a href="https://example.com/a?x=1&amp;y=2">https://example.com/a?x=1&amp;y=2</a>),' in block
+    assert '<a href="https://en.wikipedia.org/wiki/Foo_(bar)">' in block
