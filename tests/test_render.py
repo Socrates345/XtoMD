@@ -4,7 +4,7 @@ from html import unescape
 from urllib.parse import unquote
 
 from xmd.models import FeedItem
-from xmd.render import build_markdown
+from xmd.render import build_markdown, build_quick
 
 NOW = datetime(2026, 7, 8, 8, 0)
 
@@ -184,8 +184,21 @@ def test_section_link_targets_survive_awkward_group_names():
     _toc_targets_resolve(md)
     # a link destination with no raw space or parenthesis, so it parses as one link
     assert "(#X / AI" not in md
-    assert "[X / AI & ML (beta) \"quoted\" 100%](#X%20/%20AI%20%26%20ML%20%28beta%29%20%22quoted%22%20100%25)" in md
-    assert '<a id="X / AI &amp; ML (beta) &quot;quoted&quot; 100%"></a>' in md
+    assert "[X / AI and ML (beta) \"quoted\" 100%](#X%20/%20AI%20and%20ML%20%28beta%29%20%22quoted%22%20100%25)" in md
+    assert '<a id="X / AI and ML (beta) &quot;quoted&quot; 100%"></a>' in md
+
+
+def test_ampersands_never_reach_a_section_heading_or_its_contents_link():
+    """Obsidian would not follow the contents link to "## X / science & ai"
+    (click-tested; a comma in another section's name was fine), so an "&" in a
+    group name is written "and" in the heading, the link and the anchor alike
+    — in the full digest and the quick one."""
+    items = [_tweet(1, "a", group="science & AI"), _tweet(2, "b", group="R&D"), _tweet(3, "c")]
+    for md in (build_markdown(items, NOW), build_quick(items, NOW)):
+        assert "## X / science and AI\n" in md and "## X / R and D\n" in md
+        assert "[X / science and AI](#X%20/%20science%20and%20AI)" in md
+        assert "&" not in "".join(ln for ln in md.splitlines() if ln.startswith(("## ", "- [X")))
+        _toc_targets_resolve(md)
 
 
 def test_retweets_collapsed_into_one_details_block_per_section():
@@ -307,3 +320,141 @@ def test_retweet_toggle_escapes_tweet_text_and_keeps_urls_clickable():
     assert '<a href="https://t.co/abc">https://t.co/abc</a>. and' in block
     assert '(<a href="https://example.com/a?x=1&amp;y=2">https://example.com/a?x=1&amp;y=2</a>),' in block
     assert '<a href="https://en.wikipedia.org/wiki/Foo_(bar)">' in block
+
+
+STORY = "the central bank surprised markets with an emergency rate cut on friday morning"
+
+
+def _post(n: int, source: str, text: str = "a plain post", group: str = "", images=None, **kw) -> FeedItem:
+    return FeedItem(
+        source=source, source_type="x", title=text[:60],
+        url=f"https://x.com/{source.lstrip('@')}/status/{n}",
+        published=datetime(2026, 7, 8, 6, n, tzinfo=timezone.utc),
+        full_text=text, group=group, images=images or [], **kw,
+    )
+
+
+def test_repeated_story_is_highlighted_in_a_trending_block():
+    items = [
+        _post(1, "@a", STORY),
+        _post(2, "@b", STORY),
+        _post(3, "@c", "an unrelated subject about football transfers and stadium renovation"),
+    ]
+    md = build_markdown(items, NOW, priority_sources=frozenset({"@b"}))
+    assert '<a id="Trending"></a>\n## Trending\n' in md
+    assert "1 story posted or amplified by 2+ of your sources" in md
+    assert (
+        "- **×2** ★ [@a](https://x.com/a/status/1) · [@b](https://x.com/b/status/2)"
+        " — the central bank surprised markets"
+    ) in md
+    assert md.count("<!-- item:") == 3  # highlighted, never merged away
+
+
+def test_trending_gets_a_contents_entry_and_its_link_resolves():
+    md = build_markdown([_post(1, "@a", STORY, group="finance"), _post(2, "@b", STORY)], NOW)
+    assert "- [Trending](#Trending) — 1 story" in md
+    _toc_targets_resolve(md)
+
+
+def test_no_trending_block_when_nothing_repeats():
+    md = build_markdown(
+        [_post(1, "@a", STORY), _post(2, "@b", "an unrelated subject about football transfers and stadium")],
+        NOW,
+    )
+    assert "Trending" not in md
+
+
+def test_quick_digest_sorts_posts_into_bands_and_links_the_full_digest():
+    items = [
+        _post(1, "@vip", "priority text that is shown in full"),
+        _post(2, "@img", "a meme", images=["https://pbs.twimg.com/media/1.jpg"]),
+        _post(3, "@reg", "a regular post"),
+        _post(4, "@rt", "", retweet_of_author="orig", retweet_of_text="retweeted words"),
+    ]
+    md = build_quick(items, NOW, label="today", priority_sources=frozenset({"@vip"}), full_name="full.md")
+
+    assert md.startswith("# X to MD quick — 2026-07-08 08:00 (today)")
+    assert "**4 items · 4 sources** · full text: [full.md](full.md)" in md
+    assert "★ 1 priority · 🖼 1 with images · 1 post · 1 retweet" in md
+    # priority is shown in full, exactly like the archive
+    assert "### ★ Priority — 1\n\n#### @vip <!-- item:" in md and "priority text that is shown in full" in md
+    assert (
+        "### 🖼 Images — 1\n\n- **@img** · 07-08 06:02 · a meme [↗](https://x.com/img/status/2)\n"
+        "  ![](https://pbs.twimg.com/media/1.jpg)"
+    ) in md
+    assert "### Posts — 1\n\n- **@reg** · 07-08 06:03 · a regular post [↗](https://x.com/reg/status/3)" in md
+    assert "### 🔁 Retweets — 1\n\n- 🔁 **@rt** → @orig · retweeted words [↗](https://x.com/rt/status/4)" in md
+    assert "<details>" not in md  # plain markdown only: Obsidian's Live Preview can't fold it
+
+
+def test_quick_digest_is_much_shorter_than_the_full_one():
+    items = [_post(n, f"@s{n % 7}", f"post number {n} " + "some longer text " * 30) for n in range(1, 50)]
+    assert len(build_quick(items, NOW).splitlines()) < len(build_markdown(items, NOW).splitlines()) / 2
+
+
+def test_recap_group_collapses_to_a_count_and_its_repeated_stories():
+    items = [
+        _post(1, "@a", STORY, group="chat"),
+        _post(2, "@b", STORY + " sources say", group="chat"),
+        _post(3, "@c", "idle banter about something quite different entirely", group="chat"),
+        _post(4, "@d", "a regular post", group="news"),
+    ]
+    md = build_quick(items, NOW, recap_groups=frozenset({"chat"}), full_name="full.md")
+    section = md[md.index("## X / chat") : md.index("## X / news")]
+    assert "*Recap group: 3 items from 3 sources, collapsed.* Full text: [full.md](full.md)" in section
+    assert "**Repeated in this group — 1**" in section and "**×2**" in section
+    assert "idle banter" not in section
+    assert "## Trending" not in md  # a story of recap posts only lives in its own group
+
+
+def test_priority_posts_in_a_recap_group_are_still_shown_in_full():
+    items = [_post(1, "@vip", "must read this", group="chat"), _post(2, "@a", "idle banter", group="chat")]
+    md = build_quick(items, NOW, priority_sources=frozenset({"@vip"}), recap_groups=frozenset({"chat"}))
+    assert "must read this" in md and "idle banter" not in md
+
+
+def test_a_story_spanning_sections_is_trending_for_the_whole_digest():
+    items = [_post(1, "@a", STORY, group="chat"), _post(2, "@b", STORY, group="news")]
+    md = build_quick(items, NOW, recap_groups=frozenset({"chat"}))
+    assert "## Trending" in md and "**×2**" in md
+
+
+def test_one_liners_are_clipped_and_cannot_inject_markdown_or_tags():
+    text = "*BREAKING* <b>bold</b> [link](http://evil) https://t.co/x " + "word " * 60
+    md = build_quick([_post(1, "@_The_Prophet__", text)], NOW, snippet_chars=60)
+    line = next(ln for ln in md.splitlines() if ln.startswith("- **"))
+    assert "**@\\_The\\_Prophet\\_\\_**" in line
+    assert "\\*BREAKING\\*" in line and "&lt;b&gt;" in line and "\\[link\\]" in line
+    assert "t.co" not in line and "<b>" not in line
+    assert line.count("…") == 1
+
+
+def test_entities_from_x_are_decoded_in_one_liners():
+    md = build_quick([_post(1, "@a", "Trust &amp; Safety 2.0 is here today")], NOW)
+    assert "Trust & Safety 2.0 is here today" in md
+
+
+def test_quote_tweets_are_regular_posts_that_keep_what_they_respond_to():
+    md = build_quick(
+        [_post(1, "@a", "this is huge", retweet_of_author="orig", retweet_of_text="the quoted words")], NOW
+    )
+    assert "### Posts — 1" in md and "this is huge ↩ @orig: the quoted words" in md
+
+
+def test_a_plain_retweet_with_images_is_kept_with_its_images():
+    md = build_quick([_retweet(1, "@r", "the original words")], NOW)
+    assert "### 🖼 Images — 1" in md and "🔁 @orig: the original words" in md
+    assert "↩" not in md  # no comment of its own, so no quote marker
+
+
+def test_quick_digest_contents_links_resolve():
+    items = [
+        _post(1, "@a", STORY, group="finance"),
+        _post(2, "@b", STORY),
+        _post(3, "@c", "hello there general kenobi", group="ai & ml"),
+    ]
+    _toc_targets_resolve(build_quick(items, NOW))
+
+
+def test_quick_digest_empty():
+    assert "Nothing new" in build_quick([], NOW)

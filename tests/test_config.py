@@ -185,3 +185,44 @@ def test_filter_settings_from_yaml(tmp_path):
     cfg = load_config(path)
     assert cfg.drop_retweets is True
     assert cfg.block_keywords == ["ad"]
+
+
+def test_recap_option_on_a_group_header_marks_that_group_only(tmp_path):
+    path = _setup(
+        tmp_path,
+        x_md="karpathy\n## Chatter | recap\npaulg\n## finance\nDeItaone | Walter | priority\n",
+    )
+    cfg = load_config(path)
+    assert cfg.recap_groups == frozenset({"chatter"})  # lowercased like the group itself
+    by_handle = {s.handle: s for s in cfg.sources}
+    assert by_handle["paulg"].group == "chatter"  # the option doesn't leak into the name
+    assert by_handle["DeItaone"].group == "finance"  # the next header resets it
+
+
+def test_recap_option_is_case_and_space_tolerant(tmp_path):
+    path = _setup(tmp_path, x_md="##  spammer but interesting  |  RECAP \npaulg\n")
+    assert load_config(path).recap_groups == frozenset({"spammer but interesting"})
+
+
+def test_no_recap_groups_by_default(tmp_path):
+    assert load_config(_setup(tmp_path, x_md=X_MD_WITH_GROUPS)).recap_groups == frozenset()
+
+
+def test_digest_defaults(tmp_path):
+    cfg = load_config(_setup(tmp_path))
+    assert (cfg.snippet_chars, cfg.retweet_chars, cfg.media_chars) == (140, 100, 500)
+    assert cfg.trending_similarity == 0.4
+
+
+def test_digest_settings_from_yaml(tmp_path):
+    yaml_text = X_KEY_YAML + "digest:\n  snippet_chars: 90\n  retweet_chars: 60\n  media_chars: 300\n  trending_similarity: 0.55\n"
+    cfg = load_config(_setup(tmp_path, yaml_text=yaml_text))
+    assert (cfg.snippet_chars, cfg.retweet_chars, cfg.media_chars) == (90, 60, 300)
+    assert cfg.trending_similarity == 0.55
+
+
+@pytest.mark.parametrize("value", ["0", "1.5", "-0.2"])
+def test_trending_similarity_must_be_a_fraction(tmp_path, value):
+    path = _setup(tmp_path, yaml_text=X_KEY_YAML + f"digest:\n  trending_similarity: {value}\n")
+    with pytest.raises(ValueError, match="trending_similarity"):
+        load_config(path)

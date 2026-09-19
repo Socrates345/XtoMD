@@ -1,7 +1,10 @@
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
-from xmd.cli import PROGRESS_BAR_WIDTH, SINCE_RUN_MAX_HOURS, _digest, _fetch_to_store, _render_progress
+from xmd.cli import (
+    PROGRESS_BAR_WIDTH, SINCE_RUN_MAX_HOURS, _companions, _digest, _fetch_to_store, _render_progress,
+)
 from xmd.config import Config, Source
 from xmd.models import FeedItem
 from xmd.store import Store
@@ -186,3 +189,56 @@ def test_digest_returns_none_when_nothing_new(tmp_path):
     config = _config(tmp_path)
     Store(config.storage).close()  # empty store
     assert _digest(config, "since-run") is None
+
+
+def test_digest_writes_a_quick_digest_and_llm_export_next_to_the_full_one(tmp_path):
+    config = Config(
+        sources=[
+            Source(name="@vip", type="twitterapi", handle="vip", priority=True),
+            Source(name="@chat", type="twitterapi", handle="chat", group="chatter"),
+        ],
+        x_api_key="k", storage=tmp_path / "t.db", digest_dir=tmp_path / "digests",
+        recap_groups=frozenset({"chatter"}),
+    )
+    when = datetime.now(timezone.utc) - timedelta(hours=1)
+    store = Store(config.storage)
+    store.add_items([
+        FeedItem(source="@vip", source_type="x", title="v", url="https://x.com/vip/1", published=when,
+                 full_text="the priority post"),
+        FeedItem(source="@chat", source_type="x", title="c", url="https://x.com/chat/1", published=when,
+                 full_text="recap chatter", group="chatter"),
+        FeedItem(source="@reg", source_type="x", title="r", url="https://x.com/reg/1", published=when,
+                 full_text="a regular post"),
+    ])
+    store.close()
+
+    full = _digest(config, "24h")
+    quick, export, export_map = _companions(full)
+
+    assert full.name.endswith(".md") and quick.name == f"{full.stem}-quick.md"
+    assert export.parent == full.parent / ".export" and export_map.name == f"{full.stem}.map.json"
+    quick_text = quick.read_text(encoding="utf-8")
+    assert f"full text: [{full.name}]({full.name})" in quick_text
+    assert "### ★ Priority — 1" in quick_text and "the priority post" in quick_text
+    assert "recap chatter" not in quick_text  # the recap group is collapsed
+    assert "Recap group: 1 item from 1 source" in quick_text
+    assert "recap chatter" in full.read_text(encoding="utf-8")  # the archive still has it
+    export_text = export.read_text(encoding="utf-8")
+    assert "a regular post" in export_text and "recap chatter" in export_text
+    assert "the priority post" not in export_text  # priority passes through verbatim, not via the model
+    assert {m["tier"] for m in json.loads(export_map.read_text(encoding="utf-8")).values()} == {"regular", "recap"}
+
+
+def test_main_prints_where_each_digest_file_went(tmp_path, monkeypatch, capsys):
+    from xmd import cli as cli_module
+
+    config = _config(tmp_path)
+    store = Store(config.storage)
+    store.add_items([FeedItem(source="@k", source_type="x", title="t", url="https://x.com/k/1",
+                              published=datetime.now(timezone.utc), full_text="hello world")])
+    store.close()
+    monkeypatch.setattr(cli_module, "load_config", lambda path: config)
+
+    cli_module.main(["digest", "--window", "24h"])
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("saved: ") and out[1].startswith("quick: ") and out[2].startswith("export: ")

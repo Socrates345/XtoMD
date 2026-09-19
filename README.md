@@ -14,21 +14,36 @@ sources/x.md ──► API ──► FeedItem ──► SQLite (dedupe)
                                           │
                                      xmd digest
                                           │
-                                          ▼
-                                     digests/*.md
+            ┌─────────────────────────────┼─────────────────────────────┐
+            ▼                             ▼                             ▼
+   digests/<stamp>.md         digests/<stamp>-quick.md      digests/.export/<stamp>.txt
+   full archive               scan layer                    numbered text for an LLM
 ```
 
 - **`xmd fetch`** — pulls new tweets for every handle in `sources/x.md` into
   a local SQLite store (`xmd.db`), deduped by tweet URL. Nothing is ever
   purged — it's a personal archive, not a delivery queue.
-- **`xmd digest`** — renders everything in a time window to one markdown
-  file in `digests/`: full tweet text, images embedded as
-  `![](remote-url)`. A stats line and, once there's more than one section, a
-  linked table of contents sit at the top so a long file can be jumped into
-  instead of scrolled through. Retweets sort after normal tweets within
-  their section and are collapsed into a single "🔁 Retweets — N items"
-  toggle per section — one click reveals all of them, while normal tweets
-  are always fully visible. `--window since-run`
+- **`xmd digest`** — renders everything in a time window to three files in
+  `digests/`:
+  - `<stamp>.md`, the **full archive**: full tweet text, images embedded as
+    `![](remote-url)`. A stats line and, once there's more than one section,
+    a linked table of contents sit at the top so a long file can be jumped
+    into instead of scrolled through. Retweets sort after normal tweets
+    within their section and are collapsed into a single "🔁 Retweets — N
+    items" toggle per section — one click reveals all of them, while normal
+    tweets are always fully visible. A retweet's text is printed once (X
+    hands back the original's text as the retweet's own).
+  - `<stamp>-quick.md`, the **scan layer**: every tweet, but at a glance —
+    one line per regular post, plain retweets shorter still, while priority
+    sources' tweets and every tweet with images are kept whole. Plain
+    headings and lists only, no toggles.
+  - `.export/<stamp>.txt` + `.map.json`: the posts that would need
+    summarizing, as compact numbered lines, plus the number → URL map. It
+    calls no model; it is the ready-made input for one (see below).
+
+  Both digests open with a **Trending** block: stories that two or more of
+  your sources posted or amplified. Repetition is a signal, so those are
+  highlighted rather than merged away. `--window since-run`
   (default) covers everything stored since the last `xmd digest` call —
   filtered by when it was *fetched*, not when it was posted, so a digest
   run right after a fetch never comes up empty just because the tweets
@@ -61,7 +76,7 @@ version and exits.
 | Command | Flags | What it does |
 | --- | --- | --- |
 | `xmd fetch` | `--loop [SECONDS]` | Fetch every handle in `sources/x.md` into `xmd.db`, deduped by tweet URL. Without `--loop`, runs once. With `--loop`, repeats forever, pausing `SECONDS` between passes (default `900` = 15 min) — no digest is built, this only fills the store; `Ctrl+C` stops it. |
-| `xmd digest` | `--window since-run\|24h` | Render stored items to `digests/YYYY-MM-DD-HHMM.md`, or print "nothing new" and write nothing if the window is empty. `since-run` (default) — everything *fetched* since the last `xmd digest` call. `24h` — a fixed rolling 24-hour window by *published* date, ignoring the since-run cursor. |
+| `xmd digest` | `--window since-run\|24h` | Render stored items to `digests/YYYY-MM-DD-HHMM.md` (+ `-quick.md` and `.export/`), or print "nothing new" and write nothing if the window is empty. `since-run` (default) — everything *fetched* since the last `xmd digest` call. `24h` — a fixed rolling 24-hour window by *published* date, ignoring the since-run cursor. |
 | `xmd sources` | — | List configured handles, one per line, with their group if any. Takes no other flags. |
 
 ```bash
@@ -78,8 +93,27 @@ xmd --config work.yaml fetch --loop 300   # a second, differently-configured ins
 one handle per line, optional `| Display Name`, `#` comments allowed.
 `## group` headers split handles into sections in the output file.
 A third field, `| priority`, sorts that source's tweets first within its
-section, ahead of non-priority sources (e.g. `karpathy | | priority`).
+section, ahead of non-priority sources (e.g. `karpathy | | priority`) and
+keeps them whole in the quick digest.
+A group header can carry `| recap` (e.g. `## spammer but interesting | recap`)
+for a group that is only worth its global picture: the quick digest collapses
+it to a count plus the stories repeated inside it, and the full digest still
+has every tweet.
 - `sources.yaml`
+a `digest:` block tunes the quick digest and the Trending block —
+`snippet_chars`, `retweet_chars`, `media_chars` (one-liner lengths) and
+`trending_similarity` (0–1, how alike two posts must be to count as one
+story; lower finds looser repeats). See `sources.example.yaml`.
+
+### The LLM export
+
+`xmd digest` writes `digests/.export/<stamp>.txt` for a model to summarize:
+numbered lines (`[n] @source text`, URLs stripped, retweet echoes removed)
+grouped by section, with `repeated: [3] [17]` hints. Priority and image tweets
+are left out on purpose — they stay verbatim in the digest, so a model never
+sees, or garbles, them. A summary can cite `[n]`, and `<stamp>.map.json` turns
+each number back into its tweet URL, so links come from data, not from a
+model's memory. Nothing in this repo calls a model.
 
 
 ### Since-last-run gap handling

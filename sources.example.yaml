@@ -37,6 +37,14 @@ filters:
   block_keywords: []     # drop tweets whose text contains any of these
                          # (case-insensitive), e.g. ["#ad", "giveaway"]
 
+digest:
+  snippet_chars: 140     # quick digest: length of a regular post's one-liner
+  retweet_chars: 100     # ... of a plain retweet's one-liner
+  media_chars: 500       # ... cap on image tweets, which are kept nearly whole
+  trending_similarity: 0.4  # 0-1: how alike two posts must be to count as the
+                         # same story in the Trending block (0.6 = near-verbatim
+                         # reposts only, 0.3 = looser, more false matches)
+
 sources_dir: sources     # where sources/x.md lives
 storage: xmd.db          # local SQLite dedupe store (created automatically)
 digest_dir: digests      # where rendered .md files are written

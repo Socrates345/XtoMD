@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from ..config import Source
-from ..models import FeedItem
+from ..models import FeedItem, is_echo
 
 log = logging.getLogger("xmd")
 
@@ -60,17 +60,20 @@ def _retweet_of(tweet: dict) -> tuple[str, str]:
     return author, original
 
 
-def _added_comment(tweet: dict, retweet_of_author: str) -> str:
+def _added_comment(tweet: dict, retweet_of_author: str, retweet_of_text: str = "") -> str:
     """The retweeter's own added comment — empty for a bare retweet.
     twitterapi.io doesn't distinguish a bare retweet from a quote-tweet: both
     wrap the original under `retweeted_tweet`, and a bare retweet's own
     `text` field is X's auto-generated, truncated "RT @author: text…" echo of
-    the original, not real commentary. Only text that *isn't* that echo is
-    treated as an actual added comment."""
+    the original — or, as seen in stored data, the original's text itself —
+    not real commentary. Only text that *isn't* such an echo is treated as an
+    actual added comment."""
     if not retweet_of_author:
         return ""
     raw = " ".join(str(tweet.get("text", "")).split())
     if raw.lower().startswith(f"rt @{retweet_of_author.lower()}:"):
+        return ""
+    if is_echo(raw, retweet_of_text):
         return ""
     return raw
 
@@ -174,7 +177,11 @@ def fetch(
             # plain tweets and replies keep the existing title==text behavior;
             # a retweet/quote's own text/full_text is the retweeter's added
             # comment, if any — see _added_comment()
-            body_text = _added_comment(tweet, retweet_of_author) if retweet_of_author else title
+            body_text = (
+                _added_comment(tweet, retweet_of_author, retweet_of_text)
+                if retweet_of_author
+                else title
+            )
             candidate = FeedItem(
                 source=source.name,
                 source_type="x",

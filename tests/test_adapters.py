@@ -128,6 +128,39 @@ def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
     )
 
 
+def test_retweet_whose_text_is_a_copy_of_the_original_is_not_added_comment(monkeypatch):
+    """What stored data shows: a plain retweet's own `text` is the original's
+    text (cut at ~280 characters when the original is longer), with no "RT @"
+    prefix — printing it beside the 🔁 quote showed every retweet twice."""
+    from xmd.adapters import twitterapi as twitterapi_adapter
+
+    original = "A long original post that keeps going. " * 12
+    page = {
+        "status": "success",
+        "has_next_page": False,
+        "data": {
+            "tweets": [
+                {
+                    "url": "https://x.com/someone/status/6",
+                    "text": original[:280],
+                    "createdAt": "Tue Dec 10 07:05:30 +0000 2024",
+                    "isReply": False,
+                    "retweeted_tweet": {"text": original, "author": {"userName": "orig"}},
+                },
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        twitterapi_adapter.httpx, "get", lambda *a, **kw: FakeJsonResponse(page)
+    )
+
+    (item,) = twitterapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    assert item.text == "" and item.full_text == ""
+    assert item.display_body().count("A long original post") == 12  # once, not twice
+
+
 def test_twitterapi_quote_tweet_includes_quoted_content(monkeypatch):
     """twitterapi.io's schema (unlike its title-prefixing) does distinguish a
     quote tweet from a plain retweet: it nests the quoted post under

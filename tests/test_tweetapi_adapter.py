@@ -144,6 +144,27 @@ def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
     assert item.text == ""  # RT-echo text, not real commentary
 
 
+def test_retweet_text_that_copies_the_original_is_not_added_comment(monkeypatch):
+    """Stored data shows retweets whose own text is the original's text with
+    no "RT @" prefix; keeping it printed every such retweet twice."""
+    _fake_calls(monkeypatch, [
+        _by_username(),
+        _tweets_page([
+            {
+                "id": "1", "text": "original content", "createdAt": "2026-07-08T06:00:00.000Z",
+                "author": {"username": "someone"},
+                "retweetedTweet": {"text": "original content", "author": {"username": "orig"}},
+            },
+        ]),
+    ])
+
+    (item,) = tweetapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    assert item.text == "" and item.full_text == ""
+    assert item.display_body() == "🔁 Retweeted @orig: original content"
+
+
 def test_quote_tweet_keeps_commentary_and_original_separately(monkeypatch):
     _fake_calls(monkeypatch, [
         _by_username(),

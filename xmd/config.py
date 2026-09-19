@@ -44,6 +44,11 @@ class Config:
     drop_retweets: bool = False  # quality filter: exclude X retweets
     drop_replies: bool = True  # quality filter: exclude X replies
     block_keywords: list[str] = field(default_factory=list)
+    recap_groups: frozenset[str] = frozenset()  # groups marked `| recap` in sources/x.md (lowercased)
+    snippet_chars: int = 140  # quick digest: length of a regular post's one-liner
+    retweet_chars: int = 100  # quick digest: length of a plain retweet's one-liner
+    media_chars: int = 500  # quick digest: length cap on image tweets, which are kept nearly whole
+    trending_similarity: float = 0.4  # how alike two posts must be to count as the same story (0-1)
     x_backend: str = "twitterapi"  # "twitterapi" (twitterapi.io) | "tweetapi" (tweetapi.com)
     x_api_key: str = ""  # twitterapi.io API key
     tweetapi_api_key: str = ""  # tweetapi.com API key
@@ -64,7 +69,9 @@ def _read_md_list(path: Path) -> list[dict]:
     `#` comments, blank lines ignored.
 
     - `## group` headers partition entries into interest groups, each
-      becoming its own section in the rendered markdown.
+      becoming its own section in the rendered markdown. `## group | recap`
+      marks a recap group: the quick digest collapses it to its global
+      picture instead of listing every tweet.
     - a third `| priority` field marks a source as high-priority: its items
       sort first within their section, ahead of non-priority sources. A
       legacy `focus:`/`aim:` line (from the old RSS4.0 format, back when an
@@ -81,11 +88,14 @@ def _read_md_list(path: Path) -> list[dict]:
     """
     entries: list[dict] = []
     group = ""
+    recap = False
     # utf-8-sig: Windows editors add a BOM that would poison the first entry
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if stripped.startswith("##"):
-            group = stripped.lstrip("#").strip().lower()
+            name, *options = (p.strip() for p in stripped.lstrip("#").split("|"))
+            group = name.lower()
+            recap = any(o.lower() == "recap" for o in options)
             continue
         line = line.split("#", 1)[0].strip()
         if not line or line.lower().startswith(_LEGACY_AIM_PREFIXES):
@@ -93,7 +103,9 @@ def _read_md_list(path: Path) -> list[dict]:
         parts = [p.strip() for p in line.split("|")]
         handle, name = parts[0].lstrip("@"), (parts[1] if len(parts) > 1 else "")
         priority = len(parts) > 2 and parts[2].strip().lower() == "priority"
-        entries.append({"handle": handle, "name": name, "group": group, "priority": priority})
+        entries.append(
+            {"handle": handle, "name": name, "group": group, "priority": priority, "recap": recap}
+        )
     return entries
 
 
@@ -140,9 +152,18 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
 
     fetch = raw.get("fetch") or {}
     filters = raw.get("filters") or {}
+    digest = raw.get("digest") or {}
+    trending_similarity = float(digest.get("trending_similarity", 0.4))
+    if not 0 < trending_similarity <= 1:
+        raise ValueError(f"digest.trending_similarity must be in (0, 1], got {trending_similarity}")
 
     return Config(
         sources=sources,
+        recap_groups=frozenset(e["group"] for e in entries if e["recap"] and e["group"]),
+        snippet_chars=int(digest.get("snippet_chars", 140)),
+        retweet_chars=int(digest.get("retweet_chars", 100)),
+        media_chars=int(digest.get("media_chars", 500)),
+        trending_similarity=trending_similarity,
         max_per_source=int(fetch.get("max_per_source", 15)),
         x_max_age_hours=int(fetch.get("max_age_hours", 48)),
         drop_retweets=bool(filters.get("drop_retweets", False)),

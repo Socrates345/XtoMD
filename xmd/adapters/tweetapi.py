@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from ..config import Source
-from ..models import FeedItem
+from ..models import FeedItem, is_echo
 
 log = logging.getLogger("xmd")
 
@@ -132,15 +132,18 @@ def _retweet_of(tweet: dict) -> tuple[str, str]:
     return author, text
 
 
-def _added_comment(tweet: dict, retweet_of_author: str) -> str:
+def _added_comment(tweet: dict, retweet_of_author: str, retweet_of_text: str = "") -> str:
     """Mirrors adapters/twitterapi.py's _added_comment(): a bare retweet's
     own `text` can carry X's auto-generated, truncated "RT @author: text…"
-    echo of the original rather than being empty — that echo is never real
-    commentary, so it's treated as no comment either way."""
+    echo of the original — or the original's text itself — rather than being
+    empty. That echo is never real commentary, so it's treated as no comment
+    either way."""
     if not retweet_of_author:
         return ""
     raw = " ".join(str(tweet.get("text", "")).split())
     if raw.lower().startswith(f"rt @{retweet_of_author.lower()}:"):
+        return ""
+    if is_echo(raw, retweet_of_text):
         return ""
     return raw
 
@@ -271,7 +274,11 @@ def fetch(
             # plain tweets and replies keep the existing title==text behavior;
             # a retweet/quote's own text/full_text is the retweeter's own
             # comment, if any — see _added_comment()
-            body_text = _added_comment(tweet, retweet_of_author) if retweet_of_author else title
+            body_text = (
+                _added_comment(tweet, retweet_of_author, retweet_of_text)
+                if retweet_of_author
+                else title
+            )
             candidate = FeedItem(
                 source=source.name,
                 source_type="x",

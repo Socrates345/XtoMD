@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import time
@@ -11,10 +12,12 @@ from typing import Callable
 
 from . import __version__
 from .config import Config, load_config
+from .export import build_export
 from .fetcher import fetch_all
-from .render import build_markdown
+from .render import build_markdown, build_quick
 from .store import Store
 
+EXPORT_DIRNAME = ".export"  # dot-dir under digest_dir: invisible to Obsidian
 DEFAULT_LOOP_SECONDS = 900  # 15 min
 SINCE_RUN_MAX_HOURS = 168  # 7 days -- AFK-gap cap, so a long absence can't blow up API cost
 PROGRESS_BAR_WIDTH = 30
@@ -95,11 +98,45 @@ def _digest(config: Config, window: str) -> Path | None:
 
     label = "past 24h" if window == "24h" else "since last run"
     priority_sources = frozenset(s.name for s in config.sources if s.priority)
-    markdown = build_markdown(items, now, label=label, priority_sources=priority_sources)
     config.digest_dir.mkdir(parents=True, exist_ok=True)
     out_path = config.digest_dir / f"{now.strftime('%Y-%m-%d-%H%M')}.md"
-    out_path.write_text(markdown, encoding="utf-8")
+    quick_path, export_path, map_path = _companions(out_path)
+    export_path.parent.mkdir(exist_ok=True)
+
+    out_path.write_text(
+        build_markdown(
+            items, now, label=label, priority_sources=priority_sources,
+            similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
+        ),
+        encoding="utf-8",
+    )
+    quick_path.write_text(
+        build_quick(
+            items, now, label=label, priority_sources=priority_sources,
+            recap_groups=config.recap_groups, full_name=out_path.name,
+            similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
+            retweet_chars=config.retweet_chars, media_chars=config.media_chars,
+        ),
+        encoding="utf-8",
+    )
+    export_text, export_map = build_export(
+        items, now, label=label, priority_sources=priority_sources,
+        recap_groups=config.recap_groups, similarity=config.trending_similarity,
+    )
+    export_path.write_text(export_text, encoding="utf-8")
+    map_path.write_text(json.dumps(export_map, ensure_ascii=False, indent=1), encoding="utf-8")
     return out_path
+
+
+def _companions(full: Path) -> tuple[Path, Path, Path]:
+    """Files written alongside a full digest: the quick digest, and the LLM
+    export with its post-number map (in a dot-dir, so Obsidian ignores them)."""
+    export_dir = full.parent / EXPORT_DIRNAME
+    return (
+        full.with_name(f"{full.stem}-quick.md"),
+        export_dir / f"{full.stem}.txt",
+        export_dir / f"{full.stem}.map.json",
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -161,7 +198,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "digest":
         out_path = _digest(config, args.window)
         if out_path:
+            quick_path, export_path, _map_path = _companions(out_path)
             print(f"saved: {out_path}")
+            print(f"quick: {quick_path}")
+            print(f"export: {export_path} (+ .map.json)")
         else:
             print("nothing new in this window — no file written")
         return
