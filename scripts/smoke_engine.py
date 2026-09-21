@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -58,7 +59,7 @@ SCHEMA = {
 }
 SYSTEM = "You condense numbered social-media posts into a short brief. Reply with JSON only."
 
-# calls per export: what xmd/chunk.py makes of the frozen 24h export (10; tiers are never mixed),
+# calls per export: what xmd/summary/chunk.py makes of the frozen 24h export (10; tiers are never mixed),
 # and roughly three times the posts for three days (~27, the per-tier remainders don't triple)
 CALLS_24H, CALLS_3D = 10, 27
 PLANNED_OUT = 1200  # tokens a real chunk's reply runs to (plan §4: ~5K in, ~1.2K out)
@@ -244,7 +245,9 @@ def main(argv: list[str] | None = None) -> int:
                     "omit it when the server offers just one")
     ap.add_argument("--list", action="store_true", help="print the models the server offers and exit")
     ap.add_argument("--base-url", default="http://127.0.0.1:1234/v1", help="default: LM Studio")
-    ap.add_argument("--api-key", default="", help="only if the runtime wants one")
+    # (this script stands alone, so it names the variable itself: xmd.summary.engine.API_KEY_ENV_VAR)
+    ap.add_argument("--api-key", default=os.environ.get("XMD_LLM_API_KEY", ""),
+                    help="only if the runtime wants one (default: $XMD_LLM_API_KEY; a key typed here stays in your shell history)")
     ap.add_argument("--chunk-posts", type=int, default=150, help="posts in the full-chunk test (~5K tokens)")
     ap.add_argument("--timeout", type=float, default=600, help="seconds per call")
     ap.add_argument("--no-think", action="store_true",

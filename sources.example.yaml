@@ -7,8 +7,8 @@
 # login, no self-hosting either way:
 #
 # twitterapi.io (https://twitterapi.io, the default) — pay-per-tweet, no
-# subscription: $0.15 per 1,000 tweets *returned*, so keep
-# fetch.max_per_source bounded (not 0).
+# subscription: $0.15 per 1,000 tweets *returned*, so set
+# fetch.max_per_source to a number you are happy to pay for (see below).
 #
 # tweetapi.com (https://tweetapi.com) — flat monthly request quota instead
 # (e.g. $17/mo for 100,000 calls on the Pro tier; ~20 tweets/call).
@@ -24,8 +24,14 @@ x:
                           # on the paid plan
 
 fetch:
-  max_per_source: 15     # cap items kept per handle per fetch (0 = unlimited,
-                         # unsafe on a paid-per-tweet backend — see above)
+  max_per_source: 15     # tweets fetched per handle per fetch: up to twice this
+                         # (the spare half is room for the replies and retweets
+                         # the filters drop), and whatever the filters leave is
+                         # kept. 0 = no limit on tweetapi.com, where
+                         # max_age_hours ends the paging; on twitterapi.io,
+                         # which bills per tweet, 0 keeps a safety ceiling of
+                         # 100 per handle, and a warning names any handle that
+                         # reaches it
   max_age_hours: 48      # stop paginating a handle once a tweet older than
                          # this is seen (0 = unlimited); also bounds cost
 
@@ -38,7 +44,7 @@ filters:
                          # (case-insensitive), e.g. ["#ad", "giveaway"]
 
 digest:
-  snippet_chars: 140     # quick digest: length of a regular post's one-liner
+  snippet_chars: 140     # quick digest (`xmd digest --quick`): length of a regular post's one-liner
   retweet_chars: 100     # ... of a plain retweet's one-liner
   media_chars: 500       # ... cap on image tweets, which are kept nearly whole
   trending_similarity: 0.4  # 0-1: how alike two posts must be to count as the

@@ -3,7 +3,13 @@ sources.yaml
 sources/
 sources/*
 xmd.db
+# SQLite journals (xmd.db-journal, -wal, -shm) left behind by a killed run
+*.db-*
 digests/
+
+# keys: the settings file can take them from the environment instead
+.env
+.env.*
 
 # leftover local state from the pre-rewrite app (rss40/, on `main`) — not
 # used by this tool, kept out of git if still present on disk

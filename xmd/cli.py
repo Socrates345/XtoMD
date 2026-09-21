@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Callable
 
 from . import __version__
-from .config import Config, load_config
-from .export import build_export
-from .fetcher import fetch_all
-from .models import FeedItem
-from .render import build_markdown, build_quick
-from .store import Store
+from .core.config import Config, Source, load_config
+from .digest.export import build_export
+from .ingest.fetcher import fetch_all
+from .core.models import FeedItem
+from .digest.render import build_markdown, build_quick
+from .core.store import Store
 
 EXPORT_DIRNAME = ".export"  # dot-dir under digest_dir: invisible to Obsidian
 DEFAULT_LOOP_SECONDS = 900  # 15 min
@@ -37,12 +37,25 @@ def _render_progress(done: int, total: int) -> None:
     sys.stdout.flush()
 
 
+def _report_failures(failed: list[tuple[Source, str]]) -> None:
+    """Name every source that could not be fetched, and why, after the pass:
+    the usual cause is an account that changed its @, which only the user can
+    fix. The per-source log line is easy to miss among the INFO lines and the
+    progress bar."""
+    if not failed:
+        return
+    print(f"{len(failed)} source(s) failed to fetch (if an account was renamed, update its handle in x.md):")
+    for source, why in failed:
+        label = f"@{source.handle}" if source.name == f"@{source.handle}" else f"@{source.handle} ({source.name})"
+        print(f"  {label}: {why}")
+
+
 async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] | None = None) -> int:
-    """Fetch every source and store new items. If the previous run was
-    longer ago than `config.x_max_age_hours` covers, widen this fetch's
-    lookback to close the gap (capped at SINCE_RUN_MAX_HOURS) — otherwise
-    `xmd digest --window since-run` could claim a window the fetch never
-    actually covered."""
+    """Fetch every source and store new items, then report the sources that
+    failed. If the previous run was longer ago than `config.x_max_age_hours`
+    covers, widen this fetch's lookback to close the gap (capped at
+    SINCE_RUN_MAX_HOURS) — otherwise `xmd digest --window since-run` could
+    claim a window the fetch never actually covered."""
     store = Store(config.storage)
     try:
         last_run_at = store.get_meta("last_run_at")
@@ -55,17 +68,18 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
         if gap_hours > config.x_max_age_hours:
             override = int(min(gap_hours, SINCE_RUN_MAX_HOURS)) + 1
 
-    items = await fetch_all(config, progress=progress, x_max_age_hours_override=override)
+    result = await fetch_all(config, progress=progress, x_max_age_hours_override=override)
     store = Store(config.storage)
     try:
-        new = store.add_items(items)
+        new = store.add_items(result.items)
         store.set_meta("last_run_at", datetime.now(timezone.utc).isoformat())
     finally:
         store.close()
+    _report_failures(result.failed)
     return new
 
 
-def _digest(config: Config, window: str) -> Path | None:
+def _digest(config: Config, window: str, full: bool = False, quick: bool = False) -> Path | None:
     """`window="24h"` is a content-time filter (published in the last 24h).
     `window="since-run"` is a fetch-time filter against its own cursor
     (`last_digest_at`, separate from fetch's `last_run_at`): everything
@@ -74,9 +88,12 @@ def _digest(config: Config, window: str) -> Path | None:
     a digest right after a fetch come up empty, since a tweet is always
     published before the moment it's fetched.
 
-    The cursor advances on every call, even when nothing new is found, so
-    "since-run" always means "since I last checked," not "since I last saw
-    something.\""""
+    The cursor advances on every call that gets as far as writing (or finding
+    nothing to write), even when nothing new is found, so "since-run" always
+    means "since I last checked," not "since I last saw something.\"
+
+    Returns the path the full digest has (or would have, without `full`): its
+    stem names every file this digest writes. None when the window is empty."""
     now = datetime.now(timezone.utc)
     store = Store(config.storage)
     try:
@@ -91,42 +108,58 @@ def _digest(config: Config, window: str) -> Path | None:
             )
             items = store.recent_by_fetch(since)
         store.flag_after_silence(items)
-        store.set_meta("last_digest_at", now.isoformat())
     finally:
         store.close()
 
-    if not items:
-        return None
+    written = None
+    if items:
+        label = "past 24h" if window == "24h" else "since last run"
+        out_path = config.digest_dir / f"{now.strftime('%Y-%m-%d-%H%M')}.md"
+        written = write_digest(config, items, now, label, out_path, full=full, quick=quick)
 
-    label = "past 24h" if window == "24h" else "since last run"
-    out_path = config.digest_dir / f"{now.strftime('%Y-%m-%d-%H%M')}.md"
-    return write_digest(config, items, now, label, out_path)
+    # the cursor moves once the digest is written, and to `now` (not to when the write ended), so a write that fails
+    # doesn't use up the window and nothing fetched meanwhile falls between two digests
+    store = Store(config.storage)
+    try:
+        store.set_meta("last_digest_at", now.isoformat())
+    finally:
+        store.close()
+    return written
 
 
-def write_digest(config: Config, items: list[FeedItem], now: datetime, label: str, out_path: Path) -> Path:
-    """Render `items` to the full digest at `out_path`, with its companions: the
-    quick digest, and the LLM export with its post-number map. Which items go in
-    is the caller's business (see `_digest`, or scripts/freeze_export.py)."""
+def write_digest(
+    config: Config, items: list[FeedItem], now: datetime, label: str, out_path: Path,
+    full: bool = False, quick: bool = False,
+) -> Path:
+    """Write what the brief is made from: the LLM export with its post-number map,
+    and the ids of every item in `items` (the brief also shows the priority and
+    image tweets the export leaves out, and finds them again by id). The full
+    digest is written at `out_path` only with `full`, the quick digest next to it
+    only with `quick`. Which items go in is the caller's business (see `_digest`,
+    or scripts/freeze_export.py)."""
     priority_sources = frozenset(s.name for s in config.sources if s.priority)
-    quick_path, export_path, map_path = _companions(out_path)
+    quick_path, export_path, map_path, items_path = _companions(out_path)
     export_path.parent.mkdir(parents=True, exist_ok=True)
 
-    out_path.write_text(
-        build_markdown(
-            items, now, label=label, priority_sources=priority_sources,
-            similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
-        ),
-        encoding="utf-8",
-    )
-    quick_path.write_text(
-        build_quick(
-            items, now, label=label, priority_sources=priority_sources,
-            recap_groups=config.recap_groups, full_name=out_path.name,
-            similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
-            retweet_chars=config.retweet_chars, media_chars=config.media_chars,
-        ),
-        encoding="utf-8",
-    )
+    if full:
+        out_path.write_text(
+            build_markdown(
+                items, now, label=label, priority_sources=priority_sources,
+                similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
+            ),
+            encoding="utf-8",
+        )
+    if quick:
+        quick_path.write_text(
+            build_quick(
+                items, now, label=label, priority_sources=priority_sources,
+                recap_groups=config.recap_groups, full_name=out_path.name if full else "",  # no link to a file not written
+                similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
+                retweet_chars=config.retweet_chars, media_chars=config.media_chars,
+            ),
+            encoding="utf-8",
+        )
+    items_path.write_text(json.dumps(list(dict.fromkeys(i.id for i in items))), encoding="utf-8")
     export_text, export_map = build_export(
         items, now, label=label, priority_sources=priority_sources,
         recap_groups=config.recap_groups, similarity=config.trending_similarity,
@@ -136,14 +169,33 @@ def write_digest(config: Config, items: list[FeedItem], now: datetime, label: st
     return out_path
 
 
-def _companions(full: Path) -> tuple[Path, Path, Path]:
-    """Files written alongside a full digest: the quick digest, and the LLM
-    export with its post-number map (in a dot-dir, so Obsidian ignores them)."""
+def run_digest(config: Config, window: str, full: bool = False, quick: bool = False) -> Path | None:
+    """`xmd digest`: make the digest, say where each file went, and return the export the brief is made
+    from (None when the window was empty and nothing was written)."""
+    out_path = _digest(config, window, full=full, quick=quick)
+    if not out_path:
+        print("nothing new in this window — no file written")
+        return None
+    quick_path, export_path, _map_path, _items_path = _companions(out_path)
+    if full:
+        print(f"saved: {out_path}")
+    if quick:
+        print(f"quick: {quick_path}")
+    print(f"export: {export_path} (+ .map.json, .items.json)")
+    return export_path
+
+
+def _companions(full: Path) -> tuple[Path, Path, Path, Path]:
+    """The other files named after a full digest: the quick digest, and the LLM
+    export with its post-number map and its list of item ids (in a dot-dir, so
+    Obsidian ignores them). Whether the full and quick digests exist is up to
+    `write_digest`; the other three are always written."""
     export_dir = full.parent / EXPORT_DIRNAME
     return (
         full.with_name(f"{full.stem}-quick.md"),
         export_dir / f"{full.stem}.txt",
         export_dir / f"{full.stem}.map.json",
+        export_dir / f"{full.stem}.items.json",
     )
 
 
@@ -170,6 +222,16 @@ def main(argv: list[str] | None = None) -> None:
         default="since-run",
         help="since-run: everything stored since the last `xmd digest` (default); "
         "24h: a fixed rolling 24-hour window",
+    )
+    p_digest.add_argument(
+        "--full",
+        action="store_true",
+        help="also write the full digest, every tweet in full (off by default: the brief is the reading copy)",
+    )
+    p_digest.add_argument(
+        "--quick",
+        action="store_true",
+        help="also write the quick digest, one line per post (off by default)",
     )
 
     sub.add_parser("sources", help="list configured sources")
@@ -204,14 +266,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "digest":
-        out_path = _digest(config, args.window)
-        if out_path:
-            quick_path, export_path, _map_path = _companions(out_path)
-            print(f"saved: {out_path}")
-            print(f"quick: {quick_path}")
-            print(f"export: {export_path} (+ .map.json)")
-        else:
-            print("nothing new in this window — no file written")
+        run_digest(config, args.window, full=args.full, quick=args.quick)
         return
 
 

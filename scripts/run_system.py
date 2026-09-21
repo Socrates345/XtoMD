@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -30,14 +31,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
 import run_stats  # noqa: E402  (the script next to this one)
-from xmd.chunk import (  # noqa: E402
+from xmd.summary.chunk import (  # noqa: E402
     CHARS_PER_TOKEN, DEFAULT_COMPRESSION, DEFAULT_MAX_INPUT_TOKENS, estimate_tokens, make_chunks, parse_compression,
     parse_export, tier_shares,
 )
-from xmd.config import read_group_levels  # noqa: E402
-from xmd.engine import DEFAULT_BASE_URL, Engine, EngineError, ModelChoiceError, choose_model, list_models  # noqa: E402
-from xmd.prompt import BRIEF_SCHEMA, DEFAULT_PROMPT, bounded_schema, load_prompt  # noqa: E402
-from xmd.runner import (  # noqa: E402
+from xmd.core.config import read_group_levels  # noqa: E402
+from xmd.summary.engine import (  # noqa: E402
+    API_KEY_ENV_VAR, DEFAULT_BASE_URL, Engine, EngineError, ModelChoiceError, choose_model, list_models,
+)
+from xmd.summary.prompt import BRIEF_SCHEMA, DEFAULT_PROMPT, bounded_schema, load_prompt  # noqa: E402
+from xmd.summary.runner import (  # noqa: E402
     DEFAULT_TEMPERATURE, IMPLAUSIBLE_CHARS_PER_TOKEN, reply_budget, run_chunks, summarize, suspect_truncation, write_run,
 )
 
@@ -86,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
                          "of their words, 0.10 about 10%%. Retweets and the recap group keep their own fixed shares")
     ap.add_argument("--model", default="", help="model id, or part of one; omit it when the server offers just one")
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help="default: LM Studio")
-    ap.add_argument("--api-key", default="", help="only if the runtime wants one")
+    ap.add_argument("--api-key", default=os.environ.get(API_KEY_ENV_VAR, ""),
+                    help=f"only if the runtime wants one (default: ${API_KEY_ENV_VAR}; a key typed here stays in your shell history)")
     ap.add_argument("--export", default="", help="export .txt to brief (default: the newest in DIGESTS/.export)")
     ap.add_argument("--digests-dir", default="digests")
     ap.add_argument("--sources-dir", default="sources", help="where x.md is: its `## group | high` / `| low` levels set how much each group keeps")

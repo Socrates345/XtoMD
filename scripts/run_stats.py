@@ -17,9 +17,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
-from xmd.chunk import parse_export  # noqa: E402
-from xmd.runner import compression_label  # noqa: E402
-from xmd.verify import chunk_stats, support  # noqa: E402
+from xmd.summary.chunk import parse_export  # noqa: E402
+from xmd.summary.runner import compression_label  # noqa: E402
+from xmd.summary.verify import chunk_stats, support  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

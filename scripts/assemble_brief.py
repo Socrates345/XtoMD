@@ -1,8 +1,8 @@
 """Assemble a saved run into the readable brief: Phase 2 (docs/digest-summary.md).
 
 Reads a run (digests/.runs/<label>), the digest export it was made from, and the digest's
-own posts (rebuilt from the item ids in the full digest, out of a copy of the database), and
-writes `digests/<date>-brief.md`: priority tweets first and in full, then trending
+own posts (rebuilt from the item ids in `.export/<stamp>.items.json`, or in the full digest
+of an older run, out of a copy of the database), and writes `digests/<date>-brief.md`: priority tweets first and in full, then trending
 stories, then each group's section in the order of its importance, with the image tweets
 whole and the model's summaries linking to the tweets they cite. Each section opens with a
 short summary of what it was about (one model call per section, the same model as the run,
@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -29,15 +30,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
-from xmd.brief import build_brief, digest_item_ids, digest_time, load_run, summary_items  # noqa: E402
-from xmd.chunk import parse_export  # noqa: E402
-from xmd.config import load_config  # noqa: E402
-from xmd.engine import Engine  # noqa: E402
-from xmd.prompt import load_section_prompt  # noqa: E402
-from xmd.runner import compression_label  # noqa: E402
-from xmd.sections import load_cache, save_cache, section_inputs, summarize_sections  # noqa: E402
-from xmd.store import Store  # noqa: E402
-from xmd.topics import topics_by_section, usage_baseline  # noqa: E402
+from xmd.summary.brief import build_brief, digest_time, load_item_ids, load_run, summary_items  # noqa: E402
+from xmd.summary.chunk import parse_export  # noqa: E402
+from xmd.core.config import load_config  # noqa: E402
+from xmd.summary.engine import API_KEY_ENV_VAR, Engine  # noqa: E402
+from xmd.summary.prompt import load_section_prompt  # noqa: E402
+from xmd.summary.runner import compression_label  # noqa: E402
+from xmd.summary.sections import load_cache, save_cache, section_inputs, summarize_sections  # noqa: E402
+from xmd.core.store import Store  # noqa: E402
+from xmd.summary.topics import topics_by_section, usage_baseline  # noqa: E402
 
 HISTORY_DAYS = 14  # what "louder than usual" is measured against
 
@@ -56,8 +57,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--refresh", action="store_true", help="ask the model again even where an answer is cached")
     ap.add_argument("--model", default="", help="model for the section summaries (default: the run's)")
     ap.add_argument("--base-url", default="", help="server for the section summaries (default: the run's)")
-    ap.add_argument("--api-key", default="")
+    ap.add_argument("--api-key", default=os.environ.get(API_KEY_ENV_VAR, ""),
+                    help=f"only if the runtime wants one (default: ${API_KEY_ENV_VAR}; a key typed here stays in your shell history)")
     args = ap.parse_args(argv)
+
+    try:  # first, as make_brief.py does: a broken config should not cost a look through the run first
+        config = load_config(args.config)
+    except (FileNotFoundError, ValueError) as exc:
+        sys.exit(f"config error: {exc}")
 
     digests = Path(args.digests_dir)
     runs = digests / ".runs"
@@ -78,12 +85,12 @@ def main(argv: list[str] | None = None) -> int:
     mapping = json.loads(export.with_suffix(".map.json").read_text(encoding="utf-8"))
     posts, repeated = parse_export(export.read_text(encoding="utf-8"), mapping)
     full = digests / f"{stem}.md"
-    if not full.exists():
-        print(f"{full} is missing: the full digest lists the items this brief is made from")
+    ids = load_item_ids(export, full)
+    if ids is None:
+        print(f"{export.with_suffix('.items.json')} is missing: it lists the items this brief is made from "
+              f"(the full digest {full.name} would do, but it is missing too)")
         return 1
-    ids = digest_item_ids(full.read_text(encoding="utf-8"))
 
-    config = load_config(args.config)
     with tempfile.TemporaryDirectory() as tmp:  # a copy, so the real database is never touched
         copy = Path(tmp) / "xmd.db"
         shutil.copy2(config.storage, copy)
@@ -132,7 +139,8 @@ def main(argv: list[str] | None = None) -> int:
         levels=levels,
         similarity=config.trending_similarity,
         snippet_chars=config.snippet_chars, retweet_chars=config.retweet_chars, media_chars=config.media_chars,
-        full_name=full.name, topics=topics, summaries=summaries,
+        full_name=full.name if full.exists() else "",  # the full digest is optional: no link to a file that isn't there
+        topics=topics, summaries=summaries,
         model_line=f"Brief by {engine['model']}, {compression}, prompt {manifest['prompt']['sha256'][:8]}, run {run.name}",
     )
     out = Path(args.out) if args.out else digests / f"{now.strftime('%Y-%m-%d')}-brief.md"

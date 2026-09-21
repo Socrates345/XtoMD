@@ -2,8 +2,8 @@
 
 `xmd digest` can only cut "since the last digest" or "the last 24 h from now", so it
 cannot rebuild a past day. This cuts an explicit window from the database and writes
-the files `xmd digest` would (full digest, quick digest, LLM export + map), named
-`frozen-<from>--<to>`, plus a manifest: counts per tier, full-text words, and a hash of
+the files `xmd digest` would (LLM export + map + item ids; the full and quick digests
+only with --full and --quick), named `frozen-<from>--<to>`, plus a manifest: counts per tier, full-text words, and a hash of
 the export (line endings normalized to LF, so Windows and Linux agree), so every
 system can be shown to have read the same file.
 
@@ -31,9 +31,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
 from xmd.cli import _companions, write_digest  # noqa: E402
-from xmd.config import load_config  # noqa: E402
-from xmd.store import Store  # noqa: E402
-from xmd.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of  # noqa: E402
+from xmd.core.config import load_config  # noqa: E402
+from xmd.core.store import Store  # noqa: E402
+from xmd.core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of  # noqa: E402
 
 TIERS = (PRIORITY, MEDIA, REGULAR, RETWEET, RECAP)  # the tier order of the plan's "Size and reading time"
 
@@ -49,12 +49,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--to", dest="until", required=True, type=_utc, help="window end, UTC, exclusive")
     ap.add_argument("--fetched-by", type=_utc, default=None,
                     help="only posts stored by then, UTC (2026-09-19T11:46), so a later fetch can't change the window")
+    ap.add_argument("--full", action="store_true", help="also write the full digest, as `xmd digest --full` does")
+    ap.add_argument("--quick", action="store_true", help="also write the quick digest, as `xmd digest --quick` does")
     ap.add_argument("--config", default="sources.yaml", help="path to sources.yaml")
     args = ap.parse_args(argv)
     if args.until <= args.since:
         ap.error("--to must be after --from")
 
-    config = load_config(args.config)
+    try:
+        config = load_config(args.config)
+    except (FileNotFoundError, ValueError) as exc:
+        sys.exit(f"config error: {exc}")
     with tempfile.TemporaryDirectory() as tmp:  # read a copy, so the real database is never written
         copy = Path(tmp) / "xmd.db"
         shutil.copy2(config.storage, copy)
@@ -81,9 +86,15 @@ def main(argv: list[str] | None = None) -> int:
     label = f"frozen {args.since:%Y-%m-%d %H:%M} to {args.until:%Y-%m-%d %H:%M} UTC"
     if args.fetched_by:
         label += f", as fetched by {args.fetched_by:%Y-%m-%d %H:%M}"
-    full = config.digest_dir / f"{stem}.md"
-    write_digest(config, items, args.until, label, full)  # `now` is the window end, so a re-freeze is identical
-    quick, export, export_map = _companions(full)
+    full_path = config.digest_dir / f"{stem}.md"
+    # `now` is the window end, so a re-freeze is identical
+    write_digest(config, items, args.until, label, full_path, full=args.full, quick=args.quick)
+    quick, export, export_map, export_items = _companions(full_path)
+    files = [export, export_map, export_items]
+    if args.quick:
+        files.insert(0, quick)
+    if args.full:
+        files.insert(0, full_path)
 
     manifest = {
         "window": {
@@ -100,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
             # LF-normalized: Windows writes CRLF, and the hash must not depend on the OS that froze it
             "sha256": hashlib.sha256(export.read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
         },
-        "files": [p.name for p in (full, quick, export, export_map)],
+        "files": [p.name for p in files],
     }
     manifest_path = export.with_name(f"{stem}.manifest.json")
     manifest_path.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
@@ -112,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     for tier in TIERS:
         print(f"{tier:<10}{per_tier[tier]['items']:>7}{per_tier[tier]['words']:>9,}")
     print(f"\nexport: {manifest['export']['posts']} posts, sha256 {manifest['export']['sha256'][:16]}...")
-    print(f"written to {full.parent}: {', '.join(manifest['files'])}, {manifest_path.name}")
+    print(f"written to {config.digest_dir}: {', '.join(manifest['files'])}, {manifest_path.name}")
     return 0
 
 
