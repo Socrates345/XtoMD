@@ -1,3 +1,4 @@
+
 ---
 name: xmd-brief
 description: Condense one chunk of numbered X (Twitter) posts into a short brief where every item cites the posts it draws on. XtoMD phase 2, version 5: the system prompt for local models, and usable as a Claude Code skill.

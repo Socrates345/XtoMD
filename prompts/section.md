@@ -1,3 +1,4 @@
+
 ---
 name: xmd-section-summary
 description: Write the short summary that opens one section of an XtoMD brief (phase 2, version 1): what the section was about today.
