@@ -8,6 +8,16 @@ def _retweet(own: str, original: str) -> FeedItem:
     )
 
 
+def test_word_count_is_the_visible_words_without_urls():
+    post = FeedItem(source="@a", source_type="x", title="t", url="https://x.com/a/status/1",
+                    full_text="two words https://t.co/abc &amp; more")
+    assert post.word_count == 4  # two, words, &, more
+
+
+def test_word_count_of_a_bare_retweet_includes_the_retweet_marker():
+    assert _retweet("", "the original").word_count == 5  # 🔁 Retweeted @orig: the original
+
+
 def test_echo_ignores_case_urls_entities_and_whitespace():
     assert is_echo("Same  text &amp; more https://t.co/abc", "same text & more")
 

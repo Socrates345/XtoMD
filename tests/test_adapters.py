@@ -99,13 +99,13 @@ def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
             "tweets": [
                 {
                     "url": "https://x.com/someone/status/4",
-                    "text": "RT @ruthbenghiat: The conversion of the GOP into an openly authoritarian party…",
+                    "text": "RT @orig: A long original post that goes on and on…",
                     "createdAt": "Tue Dec 10 07:03:30 +0000 2024",
                     "isReply": False,
                     "retweeted_tweet": {
-                        "text": "The conversion of the GOP into an openly authoritarian party "
-                        "in its domestic and foreign policies is one of the biggest stories.",
-                        "author": {"userName": "ruthbenghiat"},
+                        "text": "A long original post that goes on and on "
+                        "for a while before it finally makes its point.",
+                        "author": {"userName": "orig"},
                     },
                 },
             ],
@@ -119,12 +119,11 @@ def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
         Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
     )
     item = items[0]
-    assert item.retweet_of_author == "ruthbenghiat"
+    assert item.retweet_of_author == "orig"
     assert item.text == "" and item.full_text == ""
     assert item.display_body() == (
-        "🔁 Retweeted @ruthbenghiat: The conversion of the GOP into an openly "
-        "authoritarian party in its domestic and foreign policies is one of "
-        "the biggest stories."
+        "🔁 Retweeted @orig: A long original post that goes on and on "
+        "for a while before it finally makes its point."
     )
 
 

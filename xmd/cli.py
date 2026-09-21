@@ -14,6 +14,7 @@ from . import __version__
 from .config import Config, load_config
 from .export import build_export
 from .fetcher import fetch_all
+from .models import FeedItem
 from .render import build_markdown, build_quick
 from .store import Store
 
@@ -89,6 +90,7 @@ def _digest(config: Config, window: str) -> Path | None:
                 else now - timedelta(hours=24)
             )
             items = store.recent_by_fetch(since)
+        store.flag_after_silence(items)
         store.set_meta("last_digest_at", now.isoformat())
     finally:
         store.close()
@@ -97,11 +99,17 @@ def _digest(config: Config, window: str) -> Path | None:
         return None
 
     label = "past 24h" if window == "24h" else "since last run"
-    priority_sources = frozenset(s.name for s in config.sources if s.priority)
-    config.digest_dir.mkdir(parents=True, exist_ok=True)
     out_path = config.digest_dir / f"{now.strftime('%Y-%m-%d-%H%M')}.md"
+    return write_digest(config, items, now, label, out_path)
+
+
+def write_digest(config: Config, items: list[FeedItem], now: datetime, label: str, out_path: Path) -> Path:
+    """Render `items` to the full digest at `out_path`, with its companions: the
+    quick digest, and the LLM export with its post-number map. Which items go in
+    is the caller's business (see `_digest`, or scripts/freeze_export.py)."""
+    priority_sources = frozenset(s.name for s in config.sources if s.priority)
     quick_path, export_path, map_path = _companions(out_path)
-    export_path.parent.mkdir(exist_ok=True)
+    export_path.parent.mkdir(parents=True, exist_ok=True)
 
     out_path.write_text(
         build_markdown(

@@ -4,7 +4,7 @@ from xmd import fetcher
 from xmd.config import Config, Source
 
 
-def _x_source(handle: str = "karpathy") -> Source:
+def _x_source(handle: str = "dave") -> Source:
     return Source(name=f"@{handle}", type="twitterapi", handle=handle, platform="x")
 
 

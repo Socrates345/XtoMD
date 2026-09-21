@@ -54,7 +54,9 @@ def build_export(
     similarity: float = DEFAULT_SIMILARITY,
     limits: dict[str, int] | None = None,
 ) -> tuple[str, dict[str, dict[str, str]]]:
-    """(text, map): the numbered lines, and n -> {url, source, tier, group}."""
+    """(text, map): the numbered lines, and n -> {url, source, tier, group, words}.
+    `words` is the post's full-text word count (Item.word_count), before the
+    line was clipped, so length targets can be stated against the real thing."""
     limits = limits or DEFAULT_LIMITS
     tiers = {i.id: tier_of(i, priority_sources, recap_groups) for i in items}
     exported = [i for i in items if tiers[i.id] in limits]
@@ -86,6 +88,7 @@ def build_export(
                     numbers[item.id] = n
                     mapping[str(n)] = {
                         "url": item.url, "source": item.source, "tier": tier, "group": item.group,
+                        "words": item.word_count,
                     }
                     lines.append(f"[{n}] {item.source} {_tag(item)}{_flat(item, limits[tier])}")
 

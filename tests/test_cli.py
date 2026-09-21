@@ -12,7 +12,7 @@ from xmd.store import Store
 
 def _config(tmp_path, **kw) -> Config:
     return Config(
-        sources=[Source(name="@karpathy", type="twitterapi", handle="karpathy", platform="x")],
+        sources=[Source(name="@dave", type="twitterapi", handle="dave", platform="x")],
         x_api_key="k",
         storage=tmp_path / "t.db",
         digest_dir=tmp_path / "digests",
@@ -61,7 +61,7 @@ def test_fetch_to_store_dedupes_and_records_last_run(tmp_path, monkeypatch):
     from xmd import cli as cli_module
 
     async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
-        return [FeedItem(source="@karpathy", source_type="x", title="t", url="https://x.com/k/1")]
+        return [FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")]
 
     monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
     config = _config(tmp_path)
@@ -227,6 +227,39 @@ def test_digest_writes_a_quick_digest_and_llm_export_next_to_the_full_one(tmp_pa
     assert "a regular post" in export_text and "recap chatter" in export_text
     assert "the priority post" not in export_text  # priority passes through verbatim, not via the model
     assert {m["tier"] for m in json.loads(export_map.read_text(encoding="utf-8")).values()} == {"regular", "recap"}
+
+
+def test_a_poster_back_after_more_than_15_days_is_shown_in_full_but_a_plain_retweet_is_not(tmp_path):
+    config = Config(
+        sources=[Source(name="@dave", type="twitterapi", handle="dave"), Source(name="@erin", type="twitterapi", handle="erin")],
+        x_api_key="k", storage=tmp_path / "t.db", digest_dir=tmp_path / "digests",
+    )
+    now = datetime.now(timezone.utc)
+    hour, long_ago = now - timedelta(hours=1), now - timedelta(days=20)
+    long_text = "a long quote-tweet comment " * 20
+    store = Store(config.storage)
+    store.add_items([
+        FeedItem(source="@dave", source_type="x", title="d", url="https://x.com/dave/old", published=long_ago, full_text="old post"),
+        FeedItem(source="@dave", source_type="x", title="d", url="https://x.com/dave/quote", published=hour,
+                 full_text=long_text, retweet_of_author="orig", retweet_of_text="the post dave is quoting"),
+        FeedItem(source="@erin", source_type="x", title="e", url="https://x.com/erin/old", published=long_ago, full_text="old post"),
+        FeedItem(source="@erin", source_type="x", title="e", url="https://x.com/erin/rt", published=hour, full_text="",
+                 retweet_of_author="orig", retweet_of_text="what erin retweeted"),
+        FeedItem(source="@erin", source_type="x", title="e", url="https://x.com/erin/recent", published=now - timedelta(days=2),
+                 full_text="a post two days ago"),
+    ])
+    store.close()
+
+    full = _digest(config, "24h")
+    quick, export, export_map = _companions(full)
+    quick_text = quick.read_text(encoding="utf-8")
+    priority = quick_text[quick_text.index("### ★ Priority"):]
+    assert "### ★ Priority — 1" in priority and long_text.strip() in priority  # dave: whole, not clipped to a line
+    assert "the post dave is quoting" in priority
+    assert "🔁 **@erin** → @orig" in quick_text  # erin's plain retweet stays a one-liner
+    assert long_text.strip() not in export.read_text(encoding="utf-8")  # and dave never reaches a model
+    assert "what erin retweeted" in export.read_text(encoding="utf-8")
+    assert "dave" not in {m["source"].lstrip("@") for m in json.loads(export_map.read_text(encoding="utf-8")).values()}
 
 
 def test_main_prints_where_each_digest_file_went(tmp_path, monkeypatch, capsys):

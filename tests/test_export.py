@@ -35,8 +35,17 @@ def test_priority_and_media_are_kept_out_of_the_model_input():
 def test_lines_are_numbered_and_the_map_points_back_to_the_post():
     text, mapping = _export([_post(1, text="first"), _post(2, source="@b", text="second")])
     assert "[1] @a first" in text and "[2] @b second" in text
-    assert mapping["1"] == {"url": "https://x.com/a/status/1", "source": "@a", "tier": "regular", "group": ""}
+    assert mapping["1"] == {
+        "url": "https://x.com/a/status/1", "source": "@a", "tier": "regular", "group": "", "words": 1,
+    }
     assert mapping["2"]["url"] == "https://x.com/b/status/2"
+
+
+def test_the_map_counts_full_text_words_even_when_the_line_is_clipped():
+    long_post = _post(1, text=" ".join(["word"] * 200) + " https://t.co/abc")
+    text, mapping = _export([long_post], limits={"regular": 40})
+    assert mapping["1"]["words"] == 200  # the URL is not a word
+    assert len(text.split("[1] @a ")[1].split()) < 20  # while the exported line was cut short
 
 
 def test_groups_and_tiers_are_headed_and_retweets_and_recap_are_separate_bands():

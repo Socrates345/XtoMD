@@ -17,7 +17,7 @@ def _cfg(**kw) -> Config:
 def test_retweets_kept_by_default():
     # the brief this tool follows explicitly wants retweets included
     items = [
-        _item("RT by @paulg: something reshared"),  # legacy prefix form
+        _item("RT by @erin: something reshared"),  # legacy prefix form
         _item("RT @user: something reshared"),  # adapter form
         _item("an original tweet"),
     ]
@@ -25,7 +25,7 @@ def test_retweets_kept_by_default():
 
 
 def test_retweets_dropped_when_enabled():
-    items = [_item("RT by @paulg: something reshared"), _item("an original tweet")]
+    items = [_item("RT by @erin: something reshared"), _item("an original tweet")]
     kept = apply_filters(items, _cfg(drop_retweets=True))
     assert [i.title for i in kept] == ["an original tweet"]
 
@@ -77,8 +77,8 @@ def _authored(title: str, author: str, full_text: str = "") -> FeedItem:
 
 def test_dedup_drops_same_author_identical_text():
     items = [
-        _authored("t1", "gialloxmr", "Monero went from 0.40$ to 460$"),
-        _authored("t2", "gialloxmr", "Monero went from 0.40$ to 460$"),  # same text, different tweet id
+        _authored("t1", "erin", "Acme went from 4$ to 40$"),
+        _authored("t2", "erin", "Acme went from 4$ to 40$"),  # same text, different tweet id
     ]
     kept = apply_filters(items, _cfg())
     assert len(kept) == 1
@@ -87,8 +87,8 @@ def test_dedup_drops_same_author_identical_text():
 
 def test_dedup_keeps_same_author_different_text():
     items = [
-        _authored("t1", "trader", "oil hits $120"),
-        _authored("t2", "trader", "gold hits $2000"),
+        _authored("t1", "trader", "Acme hits $120"),
+        _authored("t2", "trader", "Globex hits $2000"),
     ]
     assert len(apply_filters(items, _cfg())) == 2
 
@@ -97,8 +97,8 @@ def test_dedup_keeps_cross_author_repetition():
     # two different people posting the same thing is a trending signal,
     # not noise — must never be treated as a duplicate
     items = [
-        _authored("t1", "alice", "NVDA earnings beat expectations"),
-        _authored("t2", "bob", "NVDA earnings beat expectations"),
+        _authored("t1", "alice", "ACME earnings beat expectations"),
+        _authored("t2", "bob", "ACME earnings beat expectations"),
     ]
     assert len(apply_filters(items, _cfg())) == 2
 

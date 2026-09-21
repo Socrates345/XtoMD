@@ -48,7 +48,7 @@ class FeedItem:
     the shape is platform-agnostic (see fetcher.py's dispatch contract) so a
     future RSS/YouTube/Substack adapter needs no changes here."""
 
-    source: str  # display name of the source ("@karpathy")
+    source: str  # display name of the source ("@dave")
     source_type: str  # "x" today; a future adapter would add "rss" etc.
     title: str
     url: str
@@ -64,6 +64,10 @@ class FeedItem:
     # for a bare retweet with nothing added) — see display_body().
     retweet_of_author: str = ""
     retweet_of_text: str = ""
+    # derived, never stored: the poster had been silent for longer than tiers.SILENCE_DAYS before
+    # this post. Set by Store.flag_after_silence when a digest loads its items, since only the
+    # database knows what the poster did before (see tiers.py).
+    after_silence: bool = field(default=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -93,3 +97,9 @@ class FeedItem:
             quoted = f"🔁 Retweeted @{self.retweet_of_author}: {self.retweet_of_text}"
             return f"{body}\n\n{quoted}" if body else quoted
         return body
+
+    @property
+    def word_count(self) -> int:
+        """Words a reader meets: display_body() minus URLs. The one measure the
+        reading-time figures and the brief's length targets are stated in."""
+        return len(URL.sub(" ", html.unescape(self.display_body())).split())

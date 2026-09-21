@@ -69,7 +69,7 @@ def section_key(item: FeedItem) -> str:
 
 def section_label(key: str) -> str:
     """"X", "X / finance", … An "&" in a group name is written "and": Obsidian
-    would not follow a contents link to "## X / science & ai" (click-tested:
+    would not follow a contents link to a heading with an "&" (click-tested:
     every other section's link worked, including ones with a comma), so
     neither the heading nor its link carries one."""
     platform, _, group = key.partition("/")
@@ -99,7 +99,7 @@ def _stories(n: int) -> str:
 
 def _md(text: str) -> str:
     """Escape what would turn plain text into markdown (emphasis, links,
-    code) — source names like "@_The_Prophet__" and tweets full of `*` and
+    code) — source names like "@_Some_Handle__" and tweets full of `*` and
     `_` shouldn't italicize a one-liner."""
     return _MD_SPECIAL.sub(r"\\\1", text)
 
@@ -151,7 +151,7 @@ def _trending_block(stories: list[Story], priority_sources: frozenset[str], limi
 
 def sectioned(items: list[FeedItem]) -> list[tuple[str, list[FeedItem]]]:
     """Ordered (section_key, items) pairs — a bare platform key ("x") sorts
-    before any of its groups ("x/biz") since it's their string prefix, which
+    before any of its groups ("x/business") since it's their string prefix, which
     is the order we want (main section first, then groups alphabetically)."""
     keys = sorted({section_key(i) for i in items})
     return [(k, [i for i in items if section_key(i) == k]) for k in keys]

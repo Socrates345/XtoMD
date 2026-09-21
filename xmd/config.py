@@ -45,6 +45,7 @@ class Config:
     drop_replies: bool = True  # quality filter: exclude X replies
     block_keywords: list[str] = field(default_factory=list)
     recap_groups: frozenset[str] = frozenset()  # groups marked `| recap` in sources/x.md (lowercased)
+    group_levels: dict[str, str] = field(default_factory=dict)  # group (lowercased) -> "high" | "low"; absent = normal
     snippet_chars: int = 140  # quick digest: length of a regular post's one-liner
     retweet_chars: int = 100  # quick digest: length of a plain retweet's one-liner
     media_chars: int = 500  # quick digest: length cap on image tweets, which are kept nearly whole
@@ -62,6 +63,9 @@ class Config:
 
 
 _LEGACY_AIM_PREFIXES = ("focus:", "aim:")
+# what a group header may say about its importance; "normal" (also written medium or regular) is the default
+LEVEL_WORDS = {"high": "high", "low": "low", "normal": "normal", "medium": "normal", "regular": "normal"}
+_HEADER_OPTIONS = frozenset(LEVEL_WORDS) | {"recap"}
 
 
 def _read_md_list(path: Path) -> list[dict]:
@@ -72,16 +76,21 @@ def _read_md_list(path: Path) -> list[dict]:
       becoming its own section in the rendered markdown. `## group | recap`
       marks a recap group: the quick digest collapses it to its global
       picture instead of listing every tweet.
+    - `## group | high` or `| low` says how much of the group the LLM brief keeps: a high
+      group gets more detail, a low one is condensed harder; no level means normal, which
+      can also be written `| normal`, `| medium` or `| regular`. The first level named wins.
+      A recap group is always the lowest, so a level written on it (`## chat | recap | low`)
+      is accepted and means nothing.
     - a third `| priority` field marks a source as high-priority: its items
       sort first within their section, ahead of non-priority sources. A
       legacy `focus:`/`aim:` line (from the old RSS4.0 format, back when an
       LLM recap read them) is tolerated and skipped.
 
-        karpathy
+        alice
 
         ## finance
-        DeItaone | Walter Bloomberg | priority
-        unusual_whales
+        NewsFrank | Frank Wire | priority
+        gina_alerts
 
     Header detection runs before `#` comment stripping so `##` is never
     eaten as a comment.
@@ -89,6 +98,7 @@ def _read_md_list(path: Path) -> list[dict]:
     entries: list[dict] = []
     group = ""
     recap = False
+    level = "normal"
     # utf-8-sig: Windows editors add a BOM that would poison the first entry
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
@@ -96,6 +106,12 @@ def _read_md_list(path: Path) -> list[dict]:
             name, *options = (p.strip() for p in stripped.lstrip("#").split("|"))
             group = name.lower()
             recap = any(o.lower() == "recap" for o in options)
+            words = [o.lower() for o in options if o]
+            level = next((LEVEL_WORDS[w] for w in words if w in LEVEL_WORDS), "normal")
+            for word in words:
+                if word not in _HEADER_OPTIONS:  # a typo like "hgih" must not silently mean normal
+                    log.warning("sources/x.md: unknown option %r on group %r is ignored (use high, normal, low or recap)",
+                                word, group)
             continue
         line = line.split("#", 1)[0].strip()
         if not line or line.lower().startswith(_LEGACY_AIM_PREFIXES):
@@ -104,9 +120,19 @@ def _read_md_list(path: Path) -> list[dict]:
         handle, name = parts[0].lstrip("@"), (parts[1] if len(parts) > 1 else "")
         priority = len(parts) > 2 and parts[2].strip().lower() == "priority"
         entries.append(
-            {"handle": handle, "name": name, "group": group, "priority": priority, "recap": recap}
+            {"handle": handle, "name": name, "group": group, "priority": priority, "recap": recap, "level": level}
         )
     return entries
+
+
+def _levels(entries: list[dict]) -> dict[str, str]:
+    return {e["group"]: e["level"] for e in entries if e["group"] and e["level"] != "normal" and not e["recap"]}
+
+
+def read_group_levels(x_md: Path) -> dict[str, str]:
+    """{group: "high" | "low"} from a sources/x.md, for the groups that state a level. Nothing else is
+    taken out of the file, so the brief can read its groups without loading the whole config."""
+    return _levels(_read_md_list(Path(x_md)))
 
 
 def load_config(path: str | Path = "sources.yaml") -> Config:
@@ -160,6 +186,7 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
     return Config(
         sources=sources,
         recap_groups=frozenset(e["group"] for e in entries if e["recap"] and e["group"]),
+        group_levels=_levels(entries),
         snippet_chars=int(digest.get("snippet_chars", 140)),
         retweet_chars=int(digest.get("retweet_chars", 100)),
         media_chars=int(digest.get("media_chars", 500)),

@@ -1,11 +1,11 @@
 import pytest
 
-from xmd.config import load_config
+from xmd.config import load_config, read_group_levels
 
 X_KEY_YAML = "x:\n  api_key: test-key\n"
 
 
-def _setup(tmp_path, yaml_text=X_KEY_YAML, x_md="karpathy\n"):
+def _setup(tmp_path, yaml_text=X_KEY_YAML, x_md="dave\n"):
     (tmp_path / "sources").mkdir(exist_ok=True)
     (tmp_path / "sources" / "x.md").write_text(x_md, encoding="utf-8")
     path = tmp_path / "sources.yaml"
@@ -14,26 +14,26 @@ def _setup(tmp_path, yaml_text=X_KEY_YAML, x_md="karpathy\n"):
 
 
 def test_basic_handle_parsing(tmp_path):
-    path = _setup(tmp_path, x_md="@karpathy\n# a comment\n\npaulg | Paul Graham\n")
+    path = _setup(tmp_path, x_md="@dave\n# a comment\n\nerin | Erin Example\n")
     cfg = load_config(path)
     by_name = {s.name: s for s in cfg.sources}
 
     assert len(cfg.sources) == 2
-    assert (by_name["@karpathy"].type, by_name["@karpathy"].handle) == ("twitterapi", "karpathy")
-    assert by_name["Paul Graham"].handle == "paulg"
+    assert (by_name["@dave"].type, by_name["@dave"].handle) == ("twitterapi", "dave")
+    assert by_name["Erin Example"].handle == "erin"
 
 
 X_MD_WITH_GROUPS = """\
-karpathy | Andrej   # above any header -> default group
+dave | David   # above any header -> default group
 
 ## Finance
-focus: oil trades, energy markets
-DeItaone | Walter Bloomberg
-unusual_whales
+focus: interest rates, bond markets
+NewsFrank | Frank Wire
+gina_alerts
 
 ## science
 aim: research talks
-paulg
+erin
 """
 
 
@@ -42,26 +42,26 @@ def test_groups_and_legacy_focus_lines_are_skipped(tmp_path):
     cfg = load_config(path)
 
     by_handle = {s.handle: s for s in cfg.sources}
-    assert by_handle["karpathy"].group == ""  # pre-header -> default
-    assert by_handle["karpathy"].name == "Andrej"  # inline comment stripped
-    assert by_handle["DeItaone"].group == "finance"  # header lowercased
-    assert by_handle["unusual_whales"].group == "finance"
-    assert by_handle["paulg"].group == "science"
+    assert by_handle["dave"].group == ""  # pre-header -> default
+    assert by_handle["dave"].name == "David"  # inline comment stripped
+    assert by_handle["NewsFrank"].group == "finance"  # header lowercased
+    assert by_handle["gina_alerts"].group == "finance"
+    assert by_handle["erin"].group == "science"
     # legacy focus:/aim: lines (from the old LLM-recap era) must not be
     # misparsed as bogus handles
-    assert {s.handle for s in cfg.sources} == {"karpathy", "DeItaone", "unusual_whales", "paulg"}
+    assert {s.handle for s in cfg.sources} == {"dave", "NewsFrank", "gina_alerts", "erin"}
 
 
 def test_priority_field_marks_source_priority(tmp_path):
     path = _setup(
         tmp_path,
-        x_md="DeItaone | Walter Bloomberg | priority\nunusual_whales | | priority\nkarpathy\n",
+        x_md="NewsFrank | Frank Wire | priority\ngina_alerts | | priority\ndave\n",
     )
     cfg = load_config(path)
     by_handle = {s.handle: s for s in cfg.sources}
-    assert by_handle["DeItaone"].priority is True
-    assert by_handle["unusual_whales"].priority is True
-    assert by_handle["karpathy"].priority is False
+    assert by_handle["NewsFrank"].priority is True
+    assert by_handle["gina_alerts"].priority is True
+    assert by_handle["dave"].priority is False
 
 
 def test_x_backend_defaults_to_twitterapi(tmp_path):
@@ -144,13 +144,13 @@ def test_missing_x_md_gives_actionable_error(tmp_path):
 
 
 def test_duplicate_handles_collapsed(tmp_path):
-    path = _setup(tmp_path, x_md="karpathy\nkarpathy\n")
+    path = _setup(tmp_path, x_md="dave\ndave\n")
     assert len(load_config(path).sources) == 1
 
 
 def test_custom_sources_dir(tmp_path):
     (tmp_path / "mylists").mkdir()
-    (tmp_path / "mylists" / "x.md").write_text("karpathy\n", encoding="utf-8")
+    (tmp_path / "mylists" / "x.md").write_text("dave\n", encoding="utf-8")
     path = tmp_path / "sources.yaml"
     path.write_text("sources_dir: mylists\nx:\n  api_key: test-key\n", encoding="utf-8")
     assert len(load_config(path).sources) == 1
@@ -190,18 +190,18 @@ def test_filter_settings_from_yaml(tmp_path):
 def test_recap_option_on_a_group_header_marks_that_group_only(tmp_path):
     path = _setup(
         tmp_path,
-        x_md="karpathy\n## Chatter | recap\npaulg\n## finance\nDeItaone | Walter | priority\n",
+        x_md="dave\n## Chatter | recap\nerin\n## finance\nNewsFrank | Frank | priority\n",
     )
     cfg = load_config(path)
     assert cfg.recap_groups == frozenset({"chatter"})  # lowercased like the group itself
     by_handle = {s.handle: s for s in cfg.sources}
-    assert by_handle["paulg"].group == "chatter"  # the option doesn't leak into the name
-    assert by_handle["DeItaone"].group == "finance"  # the next header resets it
+    assert by_handle["erin"].group == "chatter"  # the option doesn't leak into the name
+    assert by_handle["NewsFrank"].group == "finance"  # the next header resets it
 
 
 def test_recap_option_is_case_and_space_tolerant(tmp_path):
-    path = _setup(tmp_path, x_md="##  spammer but interesting  |  RECAP \npaulg\n")
-    assert load_config(path).recap_groups == frozenset({"spammer but interesting"})
+    path = _setup(tmp_path, x_md="##  loud but fun  |  RECAP \nerin\n")
+    assert load_config(path).recap_groups == frozenset({"loud but fun"})
 
 
 def test_no_recap_groups_by_default(tmp_path):
@@ -226,3 +226,45 @@ def test_trending_similarity_must_be_a_fraction(tmp_path, value):
     path = _setup(tmp_path, yaml_text=X_KEY_YAML + f"digest:\n  trending_similarity: {value}\n")
     with pytest.raises(ValueError, match="trending_similarity"):
         load_config(path)
+
+
+def test_a_group_header_can_carry_a_level_and_only_high_and_low_are_recorded(tmp_path):
+    x_md = "dave\n## Business | high\nerin\n## News | LOW\nbob\n## finance\nalice\n## Chatter | recap\ncarol\n"
+    cfg = load_config(_setup(tmp_path, x_md=x_md))
+    assert cfg.group_levels == {"business": "high", "news": "low"}  # finance is normal; chatter is recap
+    assert cfg.recap_groups == frozenset({"chatter"})
+
+
+def test_a_recap_group_has_no_level_and_the_first_level_named_wins(tmp_path):
+    x_md = "## chat | recap | low\nana\n## both | low | high\nbo\n"  # the header the user actually wrote
+    cfg = load_config(_setup(tmp_path, x_md=x_md))
+    assert cfg.group_levels == {"both": "low"} and cfg.recap_groups == frozenset({"chat"})
+
+
+def test_no_levels_by_default(tmp_path):
+    assert load_config(_setup(tmp_path, x_md=X_MD_WITH_GROUPS)).group_levels == {}
+
+
+def test_read_group_levels_needs_only_the_x_md_and_no_api_key(tmp_path):
+    x_md = tmp_path / "x.md"
+    x_md.write_text("## Business | high\nfoo | Foo | priority\n## Loud but fun | recap\nbar\n## news | low\nbaz\n", encoding="utf-8")
+    assert read_group_levels(x_md) == {"business": "high", "news": "low"}  # the recap group names no level
+
+
+def test_the_middle_level_can_be_written_normal_medium_or_regular_and_is_the_default(tmp_path):
+    x_md = "## a | normal\nx\n## b | Medium\ny\n## c | regular\nz\n## d | high\nw\n"
+    cfg = load_config(_setup(tmp_path, x_md=x_md))
+    assert cfg.group_levels == {"d": "high"}  # a, b and c are normal, so nothing to record
+
+
+def test_the_first_level_named_wins_even_when_it_is_the_middle_one(tmp_path):
+    cfg = load_config(_setup(tmp_path, x_md="## a | medium | high\nx\n## b | high | medium\ny\n"))
+    assert cfg.group_levels == {"b": "high"}
+
+
+def test_an_unknown_option_on_a_group_header_is_warned_about_not_silently_ignored(tmp_path, caplog):
+    with caplog.at_level("WARNING", logger="xmd"):
+        cfg = load_config(_setup(tmp_path, x_md="## business | hgih\nfoo\n## news | low\nbar\n"))
+    assert cfg.group_levels == {"news": "low"}  # the typo did not become a level
+    assert "unknown option 'hgih' on group 'business'" in caplog.text
+    assert "news" not in caplog.text  # and a correct header says nothing

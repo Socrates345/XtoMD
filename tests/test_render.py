@@ -189,14 +189,14 @@ def test_section_link_targets_survive_awkward_group_names():
 
 
 def test_ampersands_never_reach_a_section_heading_or_its_contents_link():
-    """Obsidian would not follow the contents link to "## X / science & ai"
+    """Obsidian would not follow the contents link to a heading with an "&"
     (click-tested; a comma in another section's name was fine), so an "&" in a
     group name is written "and" in the heading, the link and the anchor alike
     — in the full digest and the quick one."""
-    items = [_tweet(1, "a", group="science & AI"), _tweet(2, "b", group="R&D"), _tweet(3, "c")]
+    items = [_tweet(1, "a", group="arts & CRAFTS"), _tweet(2, "b", group="R&D"), _tweet(3, "c")]
     for md in (build_markdown(items, NOW), build_quick(items, NOW)):
-        assert "## X / science and AI\n" in md and "## X / R and D\n" in md
-        assert "[X / science and AI](#X%20/%20science%20and%20AI)" in md
+        assert "## X / arts and CRAFTS\n" in md and "## X / R and D\n" in md
+        assert "[X / arts and CRAFTS](#X%20/%20arts%20and%20CRAFTS)" in md
         assert "&" not in "".join(ln for ln in md.splitlines() if ln.startswith(("## ", "- [X")))
         _toc_targets_resolve(md)
 
@@ -421,9 +421,9 @@ def test_a_story_spanning_sections_is_trending_for_the_whole_digest():
 
 def test_one_liners_are_clipped_and_cannot_inject_markdown_or_tags():
     text = "*BREAKING* <b>bold</b> [link](http://evil) https://t.co/x " + "word " * 60
-    md = build_quick([_post(1, "@_The_Prophet__", text)], NOW, snippet_chars=60)
+    md = build_quick([_post(1, "@_Some_Handle__", text)], NOW, snippet_chars=60)
     line = next(ln for ln in md.splitlines() if ln.startswith("- **"))
-    assert "**@\\_The\\_Prophet\\_\\_**" in line
+    assert "**@\\_Some\\_Handle\\_\\_**" in line
     assert "\\*BREAKING\\*" in line and "&lt;b&gt;" in line and "\\[link\\]" in line
     assert "t.co" not in line and "<b>" not in line
     assert line.count("…") == 1

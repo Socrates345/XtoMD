@@ -17,3 +17,4 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+scripts/results_on_current_gpu.md

@@ -1,7 +1,7 @@
 [project]
 name = "xmd"
 version = "0.1.0"
-description = "X (Twitter) -> markdown: no login, no AI, no bot, just tweets in a .md file"
+description = "X (Twitter) -> markdown: no login, an api key and an optional llm for a small 30min daily digest recap"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
