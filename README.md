@@ -2,17 +2,13 @@
 
 Pull tweets from X accounts into markdown. Then summarize tweets using a local model. 
 
-- **Digest** (`xmd fetch`, `xmd digest`): Retrieve all tweets from a list of account using an API. ([twitterapi.io](https://twitterapi.io) (pay per tweet) or [tweetapi.com](https://tweetapi.com) (flat monthly quota))
+- **Digest** (`xmd fetch`, `xmd digest`): Retrieve all tweets from a list of account using an API.
 - **Brief**: Summarize the digest into today's Brief.
 
 
-```text
-sources/x.md ──► API ──► FeedItem ──► SQLite (dedupe) ──► XMD digest ──► LLM/LMstudio/CLaude with skills ──► XMD Brief
-
-```
-
 ## Install
 
+run commands from the repo root. Replace the model with the most appropriate for your setup.
 ```bash
 python -m venv .venv
 . .\.venv\Scripts\Activate.ps1          # Linux/macOS: . .venv/bin/activate
@@ -29,14 +25,10 @@ xmd digest                              # write digests/YYYY-MM-DD-HHMM.md
 . .\.venv\Scripts\Activate.ps1
 xmd fetch                                    # pull new tweets
 xmd digest                                   # digests + export, since the last digest
-# start LM Studio's server with the model loaded (see Setup)
-python scripts\run_system.py --model "qwen/qwen3.5-9b"    # the model summarizes the export in a few minutes.
-python scripts\assemble_brief.py             # check, assemble: digests/<date>-brief.md
+# start LM Studio's local (see setup)
+python scripts\run_system.py --model "qwen/qwen3.5-9b"    # summary in minutes.
+python scripts\assemble_brief.py             # get: digests/<date>-brief.md
 ```
-
-Paths are Windows-style; on Linux/macOS use `scripts/run_system.py`.
-Run the scripts from the repo root.
-"qwen/qwen3.5-9b" is the model I use personally on my machine, and it is sufficient.
 
 
 ## Commands

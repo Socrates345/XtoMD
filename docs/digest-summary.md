@@ -1,5 +1,7 @@
 # XtoMD — Phase 2 (the LLM brief): changelog and next steps
 
+sources/x.md ──► API ──► FeedItem ──► SQLite (dedupe) ──► XMD digest ──► LLM/LMstudio/CLaude with skills ──► XMD Brief
+
 ## digest-summary Branch State
 
 - Workflow: `xmd fetch` → `xmd digest` → `python scripts\run_system.py --model qwen` → `python scripts\assemble_brief.py` → `digests/<date>-brief.md` (header: date, `~N min read`, link to the full digest; model, compression and prompt hash in a trailing HTML comment).
