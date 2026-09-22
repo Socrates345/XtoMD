@@ -4,7 +4,7 @@ sources/x.md ──► API ──► FeedItem ──► SQLite (dedupe) ──�
 
 ## digest-summary Branch State
 
-- Workflow: `python scripts\make_brief.py --24h` (or `--since-last-run`) runs the whole chain (below); by hand it is `xmd fetch` → `xmd digest` → `python scripts\run_system.py --model qwen` → `python scripts\assemble_brief.py` → `digests/<date>-brief.md` (header: date, `~N min read`, link to the full digest if `xmd digest --full` wrote one; model, compression and prompt hash in a trailing HTML comment). The full and quick digests are off by default: the brief is the reading copy.
+- Workflow: `python scripts\make_brief.py --24h` (or `--since-last-run`) runs the whole chain (below); by hand it is `xmd fetch` → `xmd digest` → `python scripts\run_system.py --model qwen` → `python scripts\assemble_brief.py` → `digests/<date>-<hour>-<window>-brief.md` (header: date, `~N min read`, link to the full digest if `xmd digest --full` wrote one; model, compression and prompt hash in a trailing HTML comment). The full and quick digests are off by default: the brief is the reading copy.
 - Engine: Qwen 3.5 9B in LM Studio (127.0.0.1:1234), thinking off, context ≥ 8192. About 3–4.5 min per 24h window (10–11 calls) plus a few seconds per section summary.
 I like the brief that way and it reads in under 30 min at their pace.
 - Qwen model really stands out for my laptop performances. Bonsai and Dolphin models were unsufficient. note: The engine layer stays generic (any OpenAI-compatible server).

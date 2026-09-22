@@ -24,7 +24,7 @@ Make sure to run LM studio server beforehand.
 
 ```bash
 . .\.venv\Scripts\Activate.ps1
-python scripts\make_brief.py --24h           # get: digests/<date>-brief.md, from the last 24 hours
+python scripts\make_brief.py --24h           # get: digests/<date>-<hour>-24h-brief.md, from the last 24 hours
 python scripts\make_brief.py --since-last-run    # or: only what is new since your last digest
 ```
 
@@ -36,7 +36,7 @@ xmd fetch                                    # pull new tweets
 xmd digest                                   # the export the brief is made from, since the last digest
 # start LM Studio's local (see setup)
 python scripts\run_system.py --model "qwen/qwen3.5-9b"    # summary in minutes.
-python scripts\assemble_brief.py             # get: digests/<date>-brief.md
+python scripts\assemble_brief.py             # get: digests/<date>-<hour>-<window>-brief.md
 ```
 
 
@@ -124,14 +124,14 @@ Chunk the newest export, send each chunk to the model, save the raw replies unde
 
 ### `assemble_brief.py`
 
-Check a run's summaries and write `digests/<date>-brief.md` (one brief per date: the newest overwrites). It asks the model once per section for its **In short** line, cached in the run's folder, so re-assembling is free.
+Check a run's summaries and write `digests/<date>-<hour>-<window>-brief.md` (e.g. `2026-09-22-9pm-24h-brief.md`; `<window>` is `24h` or `lastrun`, so the two windows never overwrite each other, and a second run in the same hour and window does). It asks the model once per section for its **In short** line, cached in the run's folder, so re-assembling is free.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--run LABEL` | newest in `digests/.runs/` | Which run to assemble. |
 | `--config PATH` | `sources.yaml` | Settings file (priority sources, recap groups, digest lengths). |
 | `--digests-dir DIR` | `digests` | Where the digests and runs are. |
-| `--out FILE` | `<digests-dir>/<date>-brief.md` | Where to write the brief. |
+| `--out FILE` | `<digests-dir>/<date>-<hour>-<window>-brief.md` | Where to write the brief. |
 | `--no-summaries` | off | Skip the section summaries: no model call. |
 | `--refresh` | off | Ask the model again even where an answer is cached. |
 | `--model NAME` | the run's model | Model for the section summaries. |
@@ -184,7 +184,7 @@ Rebuild a fixed past window from the database as an export (plus the digests, on
 
 ## The brief
 
-**What you get**, in `digests/<date>-brief.md`: a header (date, `~N min read`, and a link to the full digest if one was written with `--full`); **★ Priority** (every priority tweet, in full); **Trending**; then one section per group, most important first (`high`, normal, `low`, recap last). Each section opens with **In short** (written by the model) and **Louder than usual** (names posted far above their normal volume over the last 14 days: counted, not guessed), then the group's image tweets whole, summary bullets that link to the posts they cite (🔥 marks a repeated story) and retweet themes. Priority and image tweets never reach a model. Retweets with your own comment count as regular posts; plain retweets become a few themes (about 4% of their words).
+**What you get**, in `digests/<date>-<hour>-<window>-brief.md`: a header (date, `~N min read`, and a link to the full digest if one was written with `--full`); **★ Priority** (every priority tweet, in full); **Trending**; then one section per group, most important first (`high`, normal, `low`, recap last). Each section opens with **In short** (written by the model) and **Louder than usual** (names posted far above their normal volume over the last 14 days: counted, not guessed), then the group's image tweets whole, summary bullets that link to the posts they cite (🔥 marks a repeated story) and retweet themes. Priority and image tweets never reach a model. Retweets with your own comment count as regular posts; plain retweets become a few themes (about 4% of their words).
 
 **Setup**, tested with [LM Studio](https://lmstudio.ai) and `qwen/qwen3.5-9b`:
 
@@ -200,7 +200,7 @@ Rebuild a fixed past window from the database as an export (plus the digests, on
 - A number, `@handle` or `$ticker` that none of the cited posts contain gets a visible ⚠. A section summary with a figure its input never had is not shown.
 - A reply that is cut off, not JSON or far too short is retried once, then its posts fall back to one-liners under "Not summarized".
 
-**Files.** `digests/<date>-brief.md` is the brief. `digests/.runs/<label>/` is one run: `run.json`, one JSON per chunk with the raw reply, and `sections.json` (the section-summary cache). Runs hold text derived from your tweets: read them with `run_stats.py`, delete old ones whenever. `digests/` is git-ignored and the scripts print counts and timings, not tweet text. Only the summarizing is local, to a server on your own machine (a `--base-url` anywhere else is warned about): `xmd fetch` sends each handle you follow, with your API key, to the API provider you chose (twitterapi.io or tweetapi.com).
+**Files.** `digests/<date>-<hour>-<window>-brief.md` is the brief. `digests/.runs/<label>/` is one run: `run.json`, one JSON per chunk with the raw reply, and `sections.json` (the section-summary cache). Runs hold text derived from your tweets: read them with `run_stats.py`, delete old ones whenever. `digests/` is git-ignored and the scripts print counts and timings, not tweet text. Only the summarizing is local, to a server on your own machine (a `--base-url` anywhere else is warned about): `xmd fetch` sends each handle you follow, with your API key, to the API provider you chose (twitterapi.io or tweetapi.com).
 
 **Troubleshooting**
 

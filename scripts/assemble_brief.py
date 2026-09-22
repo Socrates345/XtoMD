@@ -2,7 +2,8 @@
 
 Reads a run (digests/.runs/<label>), the digest export it was made from, and the digest's
 own posts (rebuilt from the item ids in `.export/<stamp>.items.json`, or in the full digest
-of an older run, out of a copy of the database), and writes `digests/<date>-brief.md`: priority tweets first and in full, then trending
+of an older run, out of a copy of the database), and writes `digests/<date>-<hour>-<window>-brief.md` (e.g.
+`2026-09-22-9pm-24h-brief.md`): priority tweets first and in full, then trending
 stories, then each group's section in the order of its importance, with the image tweets
 whole and the model's summaries linking to the tweets they cite. Each section opens with a
 short summary of what it was about (one model call per section, the same model as the run,
@@ -30,7 +31,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
-from xmd.summary.brief import build_brief, digest_time, load_item_ids, load_run, summary_items  # noqa: E402
+from xmd.summary.brief import (  # noqa: E402
+    brief_stamp, build_brief, digest_time, load_item_ids, load_run, summary_items, window_kind,
+)
 from xmd.summary.chunk import parse_export  # noqa: E402
 from xmd.core.config import load_config  # noqa: E402
 from xmd.summary.engine import API_KEY_ENV_VAR, Engine  # noqa: E402
@@ -52,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run", default="", help="run label (default: the newest in DIGESTS/.runs)")
     ap.add_argument("--config", default="sources.yaml", help="path to sources.yaml")
     ap.add_argument("--digests-dir", default="digests")
-    ap.add_argument("--out", default="", help="where to write the brief (default: DIGESTS/<date>-brief.md)")
+    ap.add_argument("--out", default="",
+                    help="where to write the brief (default: DIGESTS/<date>-<hour>-<window>-brief.md)")
     ap.add_argument("--no-summaries", action="store_true", help="do not call the model for section summaries")
     ap.add_argument("--refresh", action="store_true", help="ask the model again even where an answer is cached")
     ap.add_argument("--model", default="", help="model for the section summaries (default: the run's)")
@@ -83,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     if _sha(export) != manifest["export"]["sha256"]:
         print(f"WARNING: {export.name} is not the export this run read (hash differs)")
     mapping = json.loads(export.with_suffix(".map.json").read_text(encoding="utf-8"))
-    posts, repeated = parse_export(export.read_text(encoding="utf-8"), mapping)
+    export_text = export.read_text(encoding="utf-8")
+    posts, repeated = parse_export(export_text, mapping)
     full = digests / f"{stem}.md"
     ids = load_item_ids(export, full)
     if ids is None:
@@ -143,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         topics=topics, summaries=summaries,
         model_line=f"Brief by {engine['model']}, {compression}, prompt {manifest['prompt']['sha256'][:8]}, run {run.name}",
     )
-    out = Path(args.out) if args.out else digests / f"{now.strftime('%Y-%m-%d')}-brief.md"
+    out = Path(args.out) if args.out else digests / f"{brief_stamp(now, window_kind(export_text))}-brief.md"
     out.write_text(brief.markdown, encoding="utf-8")
 
     s = brief.stats

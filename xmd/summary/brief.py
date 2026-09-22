@@ -116,6 +116,25 @@ def digest_time(stem: str) -> datetime | None:
     return datetime.strptime(day + hhmm, "%Y-%m-%d%H%M").replace(tzinfo=timezone.utc)
 
 
+_WINDOW_LABEL = {"past 24h": "24h", "since last run": "lastrun"}
+
+
+def window_kind(export_text: str) -> str:
+    """The digest window a brief was made from ("24h" or "lastrun"), read off the export's header line
+    (`# X to MD export — ... (past 24h)` or `(since last run)`, see digest/export.py); "" if the header
+    names neither (an export written before the label existed)."""
+    first_line = export_text.split("\n", 1)[0]
+    return next((kind for label, kind in _WINDOW_LABEL.items() if f"({label})" in first_line), "")
+
+
+def brief_stamp(now: datetime, kind: str) -> str:
+    """The brief's file stem: date, the hour in 12-hour form (`9pm`, `6am`) and the window kind, e.g.
+    `2026-09-22-9pm-24h`. `kind` is "" when `window_kind` couldn't read it (an older export): the stem
+    then carries no window suffix."""
+    hour = now.strftime("%I%p").lstrip("0").lower()
+    return f"{now.strftime('%Y-%m-%d')}-{hour}" + (f"-{kind}" if kind else "")
+
+
 def load_run(run_dir: Path) -> tuple[dict, list[dict]]:
     """(manifest, chunk records in run order) of a run saved by runner.write_run."""
     manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))

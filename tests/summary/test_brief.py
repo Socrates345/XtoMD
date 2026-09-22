@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 import pytest
 
 from xmd.summary.brief import (
-    build_brief, digest_item_ids, digest_time, load_item_ids, load_run, measure, reading_minutes,
+    brief_stamp, build_brief, digest_item_ids, digest_time, load_item_ids, load_run, measure, reading_minutes,
+    window_kind,
 )
 from xmd.summary.chunk import parse_export
 from xmd.digest.export import build_export
@@ -257,6 +258,20 @@ def test_a_digests_time_comes_from_its_file_name_the_end_of_a_frozen_window_or_a
     assert digest_time("2026-09-20-1156") == datetime(2026, 9, 20, 11, 56, tzinfo=timezone.utc)
     assert digest_time("frozen-2026-09-18-1600--2026-09-19-1600") == datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
     assert digest_time("no stamp") is None
+
+
+def test_window_kind_reads_the_labelled_export_header_or_says_neither():
+    assert window_kind("# X to MD export — 2026-09-22 21:04 (past 24h)\n...") == "24h"
+    assert window_kind("# X to MD export — 2026-09-22 06:00 (since last run)\n...") == "lastrun"
+    assert window_kind("# X to MD export — 2026-09-22 06:00\n...") == ""
+
+
+def test_brief_stamp_is_date_hour_ampm_and_window_kind():
+    assert brief_stamp(datetime(2026, 9, 22, 21, 4, tzinfo=timezone.utc), "24h") == "2026-09-22-9pm-24h"
+    assert brief_stamp(datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc), "lastrun") == "2026-09-22-6am-lastrun"
+    assert brief_stamp(datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc), "24h") == "2026-09-22-12am-24h"
+    assert brief_stamp(datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc), "24h") == "2026-09-22-12pm-24h"
+    assert brief_stamp(datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc), "") == "2026-09-22-6am"
 
 
 def test_measure_counts_link_text_and_images_but_not_urls_or_markup():
