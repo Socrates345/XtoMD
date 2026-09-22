@@ -158,11 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     if s["regular_posts"]:
         print(f"regular posts cited by a summary: {s['regular_posts_cited']} of {s['regular_posts']}; "
               f"posts without any summary (failed or not run): {s['posts_without_summary']}")
-    print("\nwhat you would read:")
-    for name, words in sorted(s["bands"].items(), key=lambda kv: -kv[1]):
-        print(f"  {name:<16}{words:>7,} words")
-    print(f"  {'total':<16}{s['words']:>7,} words, {s['lines']} lines, {s['images']} images")
-    print(f"reading time: ~{s['minutes_at_your_pace']:.0f} min at your pace (40 lines a minute, 4 s per image); "
+    print(f"\nreading time: ~{s['minutes_at_your_pace']:.0f} min at your pace (40 lines a minute, 4 s per image); "
           f"by words: ~{s['minutes_normal']:.0f} min at 230 wpm, ~{s['minutes_diagonal']:.0f} min at 400 wpm")
     print(f"\nwritten to {out}")
     return 0

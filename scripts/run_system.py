@@ -106,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     ap.add_argument("--retries", type=int, default=1, help="extra attempts for a chunk that fails")
     ap.add_argument("--timeout", type=float, default=600, help="seconds per call")
+    ap.add_argument("--stats", action="store_true",
+                    help="print the full chunk plan, per-chunk progress, token counts, characters-per-token, "
+                         "and the run_stats.py table (off by default: run_stats.py itself is always there on demand)")
     args = ap.parse_args(argv)
 
     digests = Path(args.digests_dir)
@@ -127,15 +130,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"export {export.name}  sha256 {_sha(export)[:16]}...  compression {args.compression:.2f}")
     print("group levels: " + (", ".join(f"{g}={lv}" for g, lv in sorted(levels.items())) if levels
                               else f"none set in {x_md} (every group is normal)"))
-    print(f"\n{'chunk':<16} {'level':<7} {'posts':>5} {'est. in':>8} {'items':>7} {'target':>7} {'max out':>8}")
-    needs = []
-    for chunk in chunks:
-        est_in = estimate_tokens(system_for(chunk.band) + chunk.render())
-        needs.append(est_in + reply_budget(chunk))
-        print(f"{chunk.id:<16} {chunk.level:<7} {len(chunk.posts):>5} {est_in:>8,} {f'{chunk.min_items}-{chunk.max_items}':>7} "
-              f"{chunk.target_words:>7} {reply_budget(chunk):>8,}")
-    print(f"{len(chunks)} calls; the largest needs ~{max(needs):,} tokens of context (at most; the estimate is cautious), "
-          f"the plan allows {CONTEXT_TOKENS:,}")
+    if args.dry_run or args.stats:
+        print(f"\n{'chunk':<16} {'level':<7} {'posts':>5} {'est. in':>8} {'items':>7} {'target':>7} {'max out':>8}")
+        needs = []
+        for chunk in chunks:
+            est_in = estimate_tokens(system_for(chunk.band) + chunk.render())
+            needs.append(est_in + reply_budget(chunk))
+            print(f"{chunk.id:<16} {chunk.level:<7} {len(chunk.posts):>5} {est_in:>8,} {f'{chunk.min_items}-{chunk.max_items}':>7} "
+                  f"{chunk.target_words:>7} {reply_budget(chunk):>8,}")
+        print(f"{len(chunks)} calls; the largest needs ~{max(needs):,} tokens of context (at most; the estimate is cautious), "
+              f"the plan allows {CONTEXT_TOKENS:,}")
     if args.dry_run:
         return 0
 
@@ -152,15 +156,19 @@ def main(argv: list[str] | None = None) -> int:
 
     started = datetime.now(timezone.utc)
     with Engine(model, args.base_url, args.api_key, args.timeout, args.no_think) as engine:
-        print(f"\nmodel {model}" + ("  (thinking off requested)" if args.no_think else ""))
+        if args.stats:
+            print(f"\nmodel {model}" + ("  (thinking off requested)" if args.no_think else ""))
         try:  # loads the model outside the timed calls, and a thinking model fails here, not after ten calls
             warm = engine.complete("Reply with one word.", "ok", max_tokens=16)
         except EngineError as exc:
             print(f"warm-up failed, nothing was run: {exc}")
             return 1
-        print(f"warm-up ok in {warm.seconds:.1f} s (not counted)\n")
+        if args.stats:
+            print(f"warm-up ok in {warm.seconds:.1f} s (not counted)\n")
         schema = (lambda chunk: bounded_schema(chunk.min_items, chunk.max_items)) if args.bound_items else BRIEF_SCHEMA
-        results = run_chunks(engine, chunks, system_for, schema, args.retries, args.temperature, on_result=_show)
+        print(f"summarizing {len(chunks)} chunk{'s' if len(chunks) != 1 else ''}...")
+        results = run_chunks(engine, chunks, system_for, schema, args.retries, args.temperature,
+                              on_result=_show if args.stats else None)
 
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", model).strip("-")
     label = args.label or f"{slug}__c{args.compression:.2f}__{started:%Y%m%d-%H%M%S}" + ("__partial" if wanted else "")
@@ -184,11 +192,12 @@ def main(argv: list[str] | None = None) -> int:
     total = summarize(results)
     failed = f", {total['failed']} FAILED" if total["failed"] else ""
     print(f"\n{total['ok']}/{total['chunks']} chunks ok{failed}; {total['seconds']:.0f} s of model time "
-          f"({total['seconds'] / 60:.1f} min)")
-    print(f"tokens: {total['prompt_tokens']:,} in, {total['completion_tokens']:,} out; "
-          f"reply {total['reply_words']:,} words against a target of {total['target_words']:,}")
-    if total["chars_per_token"]:
-        print(f"measured ~{total['chars_per_token']} characters per token (the chunker assumes {CHARS_PER_TOKEN})")
+          f"({total['seconds'] / 60:.1f} min); reply {total['reply_words']:,} words against a target of "
+          f"{total['target_words']:,}")
+    if args.stats:
+        print(f"tokens: {total['prompt_tokens']:,} in, {total['completion_tokens']:,} out")
+        if total["chars_per_token"]:
+            print(f"measured ~{total['chars_per_token']} characters per token (the chunker assumes {CHARS_PER_TOKEN})")
     suspects = suspect_truncation(results)
     if suspects:
         print(f"WARNING: {', '.join(suspects)} reached the model with far fewer tokens than their text should "
@@ -197,7 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"WARNING: {total['chars_per_token']} characters per token is more than text can give: the context "
               "window is probably too small and cut every large prompt alike. Raise the model's context length.")
     print(f"saved to {out}\n")
-    run_stats.report(out, with_summary=False)
+    if args.stats:
+        run_stats.report(out, with_summary=False)
     return 1 if total["failed"] else 0
 
 

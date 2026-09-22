@@ -24,16 +24,23 @@ SINCE_RUN_MAX_HOURS = 168  # 7 days -- AFK-gap cap, so a long absence can't blow
 PROGRESS_BAR_WIDTH = 30
 
 
-def _render_progress(done: int, total: int) -> None:
+def _render_progress(done: int, total: int, started: float | None = None) -> None:
     """Plain in-place progress bar (\\r, no dependency) — fetches can now
     take minutes under tweetapi.com's rate limit, so a silent hang until
-    the final `fetched: N new item(s)` line is a bad default."""
+    the final `fetched: N new item(s)` line is a bad default. `started`
+    (a time.perf_counter() reading from when this pass began) adds a
+    rough ETA, extrapolated from the rate so far, once at least one
+    source has answered."""
     if total <= 0:
         return
     filled = int(PROGRESS_BAR_WIDTH * min(done / total, 1.0))
     bar = "#" * filled + "-" * (PROGRESS_BAR_WIDTH - filled)
+    eta = ""
+    if started is not None and done:
+        remaining = (time.perf_counter() - started) / done * (total - done)
+        eta = f", ~{remaining:.0f}s left" if remaining >= 1 else ", almost done"
     end = "\n" if done >= total else ""
-    sys.stdout.write(f"\rfetching sources [{bar}] {done}/{total}{end}")
+    sys.stdout.write(f"\rfetching sources [{bar}] {done}/{total}{eta}    {end}")
     sys.stdout.flush()
 
 
@@ -52,10 +59,11 @@ def _report_failures(failed: list[tuple[Source, str]]) -> None:
 
 async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] | None = None) -> int:
     """Fetch every source and store new items, then report the sources that
-    failed. If the previous run was longer ago than `config.x_max_age_hours`
-    covers, widen this fetch's lookback to close the gap (capped at
-    SINCE_RUN_MAX_HOURS) — otherwise `xmd digest --window since-run` could
-    claim a window the fetch never actually covered."""
+    failed. The lookback is sized to the actual gap since the previous fetch
+    rather than always the full `config.x_max_age_hours` — narrower on a quick
+    re-run (so it doesn't re-page a handle's whole window for nothing), wider
+    after a long gap (capped at SINCE_RUN_MAX_HOURS) so `xmd digest --window
+    since-run` never claims a window the fetch didn't actually cover."""
     store = Store(config.storage)
     try:
         last_run_at = store.get_meta("last_run_at")
@@ -65,8 +73,7 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
     override = None
     if last_run_at:
         gap_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(last_run_at)).total_seconds() / 3600
-        if gap_hours > config.x_max_age_hours:
-            override = int(min(gap_hours, SINCE_RUN_MAX_HOURS)) + 1
+        override = int(min(gap_hours, SINCE_RUN_MAX_HOURS)) + 1
 
     result = await fetch_all(config, progress=progress, x_max_age_hours_override=override)
     store = Store(config.storage)
@@ -253,15 +260,20 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "fetch":
-        progress = _render_progress if sys.stdout.isatty() else None
+        def progress_for_this_pass():  # a fresh start time each pass, so --loop's ETA isn't cumulative
+            if not sys.stdout.isatty():
+                return None
+            started = time.perf_counter()
+            return lambda done, total: _render_progress(done, total, started)
+
         if args.loop:
             log = logging.getLogger("xmd")
             log.info("looping fetch every %ss — Ctrl+C to stop", args.loop)
             while True:
-                new = asyncio.run(_fetch_to_store(config, progress=progress))
+                new = asyncio.run(_fetch_to_store(config, progress=progress_for_this_pass()))
                 print(f"fetched: {new} new item(s)")
                 time.sleep(args.loop)
-        new = asyncio.run(_fetch_to_store(config, progress=progress))
+        new = asyncio.run(_fetch_to_store(config, progress=progress_for_this_pass()))
         print(f"fetched: {new} new item(s)")
         return
 

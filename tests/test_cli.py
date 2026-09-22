@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -60,6 +61,16 @@ def test_render_progress_appends_newline_when_done(capsys):
 def test_render_progress_ignores_zero_total(capsys):
     _render_progress(0, 0)
     assert capsys.readouterr().out == ""
+
+
+def test_render_progress_shows_an_eta_once_a_source_has_answered(capsys):
+    _render_progress(5, 10, started=time.perf_counter() - 10)
+    assert "s left" in capsys.readouterr().out  # 10s for 5/10 -> ~10s left for the other 5
+
+
+def test_render_progress_shows_no_eta_before_anything_finishes(capsys):
+    _render_progress(0, 10, started=time.perf_counter())
+    assert "left" not in capsys.readouterr().out
 
 
 def test_fetch_to_store_dedupes_and_records_last_run(tmp_path, monkeypatch):
@@ -133,6 +144,27 @@ def test_fetch_to_store_widens_lookback_after_a_long_gap(tmp_path, monkeypatch):
 
     asyncio.run(_fetch_to_store(config))
     assert seen["override"] == SINCE_RUN_MAX_HOURS + 1  # capped, not the full 200h gap
+
+
+def test_fetch_to_store_narrows_lookback_for_a_recent_gap(tmp_path, monkeypatch):
+    from xmd import cli as cli_module
+
+    seen = {}
+
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+        seen["override"] = x_max_age_hours_override
+        return FetchResult([])
+
+    monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
+    config = _config(tmp_path, x_max_age_hours=48)
+
+    store = Store(config.storage)
+    recent = datetime.now(timezone.utc) - timedelta(hours=2)
+    store.set_meta("last_run_at", recent.isoformat())
+    store.close()
+
+    asyncio.run(_fetch_to_store(config))
+    assert seen["override"] == 3  # sized to the ~2h gap, not the full 48h default
 
 
 def test_fetch_to_store_no_override_on_first_run(tmp_path, monkeypatch):

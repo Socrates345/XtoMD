@@ -71,7 +71,7 @@ def test_an_inline_think_block_is_cut_out_of_the_reply():
 
 
 def test_a_reply_that_ran_out_inside_its_thinking_is_an_error_that_says_what_to_do():
-    with pytest.raises(EngineError, match="thinking.*enable_thinking = false"):
+    with pytest.raises(EngineError, match="thinking.*[Uu]ntick"):
         _engine(_ok("", finish="length", reasoning_content="Thinking Process: ...")).complete("s", "u")
     with pytest.raises(EngineError, match="empty reply"):
         _engine(_ok("<think>never closed, cut by the token cap", finish="length")).complete("s", "u")

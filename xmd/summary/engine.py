@@ -231,8 +231,7 @@ def _empty_reply(completion: Completion) -> str:
     message = f"empty reply (finish_reason={completion.finish}, {completion.reasoning_chars} chars of reasoning)"
     if completion.reasoning_chars or completion.finish == "length":
         message += (
-            ": the model spent its tokens thinking before it answered. Switch thinking off "
-            "(LM Studio: make the first line of the model's Jinja template `{%- set enable_thinking = false %}` "
-            "and reload it)"
+            ": the model spent its tokens thinking before it answered. Untick Thinking in "
+            "LM Studio, then reload the model."
         )
     return message

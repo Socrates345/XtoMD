@@ -59,7 +59,7 @@ def wait_for_server(base_url: str, api_key: str, wait: float) -> list[str] | Non
         pass
     print(f"LM Studio's server is not answering at {base_url}.\n"
           f"  -> Open LM Studio and start its server (Developer tab, port 1234).\n"
-          f"     Model: {DEFAULT_MODEL}, context length 8192 or more, thinking off (README, Setup).")
+          f"     Model: {DEFAULT_MODEL}, context length 8192 or more, thinking off (README, LM Studio setup).")
     if wait <= 0:
         raise EngineError("not waiting (--wait 0)")
     print(f"Waiting for it: I carry on by myself once it answers (Ctrl+C to stop, I give up after {wait:.0f} s).")
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             warm = engine.complete("Reply with one word.", "ok", max_tokens=16)
     except EngineError as exc:
         print(f"the model did not answer, nothing was fetched: {exc}\n"
-              "Thinking must be off and the context length 8192 or more (README, Setup).")
+              "Thinking must be off and the context length 8192 or more (README, LM Studio setup).")
         return 1
     print(f"ok in {warm.seconds:.1f} s\n")
 

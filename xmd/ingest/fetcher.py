@@ -105,7 +105,7 @@ async def fetch_all(
                     source, config.active_x_api_key, max_items,
                     **fetch_kwargs,
                 )
-            log.info(
+            log.debug(  # one line per source would spam the console for a large follow list; the progress bar is enough
                 "source %s: %d item(s) in %.1fs",
                 source.name, len(batch), time.perf_counter() - t0,
             )

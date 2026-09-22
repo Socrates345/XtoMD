@@ -211,12 +211,9 @@ def _empty_note(reply: Reply) -> str:
 # printed once, when a reply came back empty because the token cap ran out
 THINKING_HINT = """\
 thinking is probably on: the model spends its tokens reasoning before it answers.
-  --no-think sends chat_template_kwargs {"enable_thinking": false}, Qwen's documented switch, but only
-  some servers pass it to the template; LM Studio did not for Qwen3.5 (the field arrived, the model
-  still thought).
-  LM Studio: in the model's settings, Prompt Template (Jinja), make the first line
-      {%- set enable_thinking = false %}
-  then reload the model."""
+  LM Studio: untick Thinking in the model's settings, then reload the model.
+  --no-think sends chat_template_kwargs {"enable_thinking": false}, Qwen's own documented
+  switch, if your server honours it."""
 
 
 def _problem(reply: Reply, posts: int) -> str | None:
