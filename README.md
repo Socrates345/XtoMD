@@ -6,6 +6,7 @@ Pull tweets from X accounts into markdown, then turn them into a daily brief wit
 
 - Python 3.10+
 - [LM Studio](https://lmstudio.ai), for the brief: install it, download a model (`qwen/qwen3.5-9b` is what this is tested with), and do the one-time setup below. Fetching and digesting tweets needs no LLM at all.
+- Tweetapi.com subscription (or twitterapi.io)
 
 ## Install
 
@@ -14,7 +15,7 @@ python -m venv .venv
 . .\.venv\Scripts\Activate.ps1          # Linux/macOS: . .venv/bin/activate
 pip install -e .
 cp sources.example.yaml sources.yaml    # settings: backend, API key
-cp -r sources.example sources           # then edit sources/x.md: your account list
+cp -r sources.example sources           # then edit sources/x.md: provide all the X accounts you'd like to retrieve tweets from
 ```
 
 ## LM Studio setup
