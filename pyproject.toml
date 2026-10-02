@@ -8,6 +8,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "httpx>=0.27",
     "PyYAML>=6.0",
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

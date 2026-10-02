@@ -12,6 +12,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 import yaml
 
@@ -24,6 +25,39 @@ TWEETAPI_API_KEY_ENV_VAR = "XMD_TWEETAPI_KEY"
 # (tweetapi.com, flat monthly request quota) — selected via x.backend in
 # sources.yaml; fetcher.py picks the adapter module from config.x_backend.
 X_BACKENDS = ("twitterapi", "tweetapi")
+
+# the clock the brief's file name and header are read in (stored times and digest stamps stay UTC)
+DEFAULT_TIMEZONE = "Europe/Paris"
+
+# languages `language:` in sources.yaml may name, by ISO 639-1 code or English name. The code is what the model is
+# asked to tag a post with, the name is what it is told to write in.
+LANGUAGE_NAMES = {
+    "ar": "Arabic", "bg": "Bulgarian", "bn": "Bengali", "ca": "Catalan", "cs": "Czech", "da": "Danish",
+    "de": "German", "el": "Greek", "en": "English", "es": "Spanish", "et": "Estonian", "fa": "Persian",
+    "fi": "Finnish", "fr": "French", "he": "Hebrew", "hi": "Hindi", "hr": "Croatian", "hu": "Hungarian",
+    "id": "Indonesian", "it": "Italian", "ja": "Japanese", "ko": "Korean", "lt": "Lithuanian", "lv": "Latvian",
+    "ms": "Malay", "nl": "Dutch", "no": "Norwegian", "pl": "Polish", "pt": "Portuguese", "ro": "Romanian",
+    "ru": "Russian", "sk": "Slovak", "sl": "Slovenian", "sr": "Serbian", "sv": "Swedish", "th": "Thai",
+    "tr": "Turkish", "uk": "Ukrainian", "ur": "Urdu", "vi": "Vietnamese", "zh": "Chinese",
+}
+_LANGUAGE_CODES = {name.lower(): code for code, name in LANGUAGE_NAMES.items()}
+
+
+@dataclass(frozen=True)
+class Language:
+    """`language:` in sources.yaml: the languages the reader reads, and the one of them everything else is
+    translated into. Only the model's side of the brief uses it (run_system.py, assemble_brief.py): the store and
+    the digests keep every post as it was written."""
+
+    accepted: tuple[str, ...]  # ISO 639-1 codes; posts in these are left in their own language
+    translate_to: str  # one of `accepted`
+
+    def name(self, code: str) -> str:
+        return LANGUAGE_NAMES.get(code, code)
+
+    @property
+    def accepted_names(self) -> str:
+        return ", ".join(self.name(c) for c in self.accepted)
 
 
 @dataclass
@@ -56,6 +90,8 @@ class Config:
     tweetapi_rate_limit_per_minute: int = 10  # tweetapi.com's request cap (free tier); raise to 60 on the paid plan
     storage: Path = field(default_factory=lambda: Path("xmd.db"))
     digest_dir: Path = field(default_factory=lambda: Path("digests"))
+    tz: ZoneInfo = field(default_factory=lambda: ZoneInfo(DEFAULT_TIMEZONE))  # `timezone:` in sources.yaml
+    language: Language | None = None  # `language:` in sources.yaml; None = every post stays in its own language
 
     @property
     def active_x_api_key(self) -> str:
@@ -144,12 +180,39 @@ def _section(raw: dict, name: str, path: Path) -> dict:
     return value
 
 
-def load_config(path: str | Path = "sources.yaml") -> Config:
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{path} not found — copy sources.example.yaml to {path} and edit it"
-        )
+def _language_code(value: object, path: Path) -> str:
+    text = str(value).strip().lower()
+    if text in LANGUAGE_NAMES:
+        return text
+    if text in _LANGUAGE_CODES:
+        return _LANGUAGE_CODES[text]
+    raise ValueError(f"{path}: unknown language {value!r} in `language:` — use an ISO 639-1 code (en, fr, de, zh, ...)"
+                     " or its English name")
+
+
+def _language(raw: dict, path: Path) -> Language | None:
+    """`language:` read into a Language, or None when it is missing or empty. `translate_to` alone means that is
+    the only language read; `accepted` alone translates into the first of them."""
+    lang = _section(raw, "language", path)
+    accepted = lang.get("accepted") or []
+    if isinstance(accepted, str):
+        accepted = [accepted]
+    if not isinstance(accepted, list):
+        raise ValueError(f"{path}: language.accepted must be a list, e.g. [en, fr]")
+    codes = list(dict.fromkeys(_language_code(a, path) for a in accepted))
+    target = _language_code(lang["translate_to"], path) if lang.get("translate_to") else ""
+    if not codes and not target:
+        return None
+    if not codes:
+        codes = [target]
+    if not target:
+        target = codes[0]
+    if target not in codes:
+        raise ValueError(f"{path}: language.translate_to ({target}) must be one of language.accepted ({', '.join(codes)})")
+    return Language(tuple(codes), target)
+
+
+def _read_yaml(path: Path) -> dict:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
     except yaml.YAMLError as exc:
@@ -159,6 +222,23 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         raise ValueError(f"{path} is not valid YAML" + (f" (line {mark.line + 1})" if mark else "")) from None
     if not isinstance(raw, dict):
         raise ValueError(f"{path} must be a mapping of settings (x:, fetch:, ...), not a {type(raw).__name__}")
+    return raw
+
+
+def read_language(path: str | Path = "sources.yaml") -> Language | None:
+    """`language:` from a sources.yaml, and nothing else, so the model step can read it without the api key or the
+    follow list load_config insists on. A missing file means no language settings."""
+    path = Path(path)
+    return _language(_read_yaml(path), path) if path.exists() else None
+
+
+def load_config(path: str | Path = "sources.yaml") -> Config:
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found — copy sources.example.yaml to {path} and edit it"
+        )
+    raw = _read_yaml(path)
 
     x_cfg = _section(raw, "x", path)
     x_backend = str(x_cfg.get("backend", "twitterapi"))
@@ -200,6 +280,17 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
     if not 0 < trending_similarity <= 1:
         raise ValueError(f"digest.trending_similarity must be in (0, 1], got {trending_similarity}")
 
+    tz_name = str(raw.get("timezone") or DEFAULT_TIMEZONE)
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        if not available_timezones():  # no tz database at all (Windows without the tzdata package)
+            raise ValueError(
+                f"can't resolve timezone {tz_name!r}: no timezone database found. Run `pip install tzdata`"
+                " (or reinstall with `pip install -e .`)"
+            ) from None
+        raise ValueError(f"timezone must be an IANA name like Europe/Paris or UTC, got {tz_name!r}") from None
+
     return Config(
         sources=sources,
         recap_groups=frozenset(e["group"] for e in entries if e["recap"] and e["group"]),
@@ -219,4 +310,6 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         tweetapi_rate_limit_per_minute=tweetapi_rate_limit_per_minute,
         storage=Path(raw.get("storage", "xmd.db")),
         digest_dir=Path(raw.get("digest_dir", "digests")),
+        tz=tz,
+        language=_language(raw, path),
     )

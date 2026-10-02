@@ -51,6 +51,18 @@ digest:
                          # same story in the Trending block (0.6 = near-verbatim
                          # reposts only, 0.3 = looser, more false matches)
 
+language:                # the brief only: fetching and the digests keep every post as posted
+  accepted: [en]         # languages you read (ISO codes or names: en, fr, de, zh...,
+                         # or English, French...). A summary of posts in one of
+                         # these stays in their language
+  translate_to: en       # one of `accepted`: everything else is written in this one.
+                         # Tweets the brief shows as posted (priority, images,
+                         # trending) that are in another language are translated,
+                         # with the original quoted under them. Remove this whole
+                         # block to leave every post in its own language
+
 sources_dir: sources     # where sources/x.md lives
 storage: xmd.db          # local SQLite dedupe store (created automatically)
 digest_dir: digests      # where rendered .md files are written
+timezone: Europe/Paris   # clock for the brief's file name and header (any IANA
+                         # name, e.g. UTC, America/New_York); digests stay UTC

@@ -59,3 +59,27 @@ def test_the_bounded_schema_limits_the_items_and_leaves_the_original_alone():
 
 def test_the_output_example_shows_several_items_because_a_weak_model_copies_its_example():
     assert load_prompt("regular").count('{"headline"') >= 3
+
+
+def test_a_language_setting_replaces_the_language_line_of_both_prompts():
+    from xmd.core.config import Language
+    from xmd.summary.prompt import load_section_prompt
+    lang = Language(("en", "fr"), "en")
+    for prompt in (load_prompt("regular", language=lang), load_section_prompt(language=lang)):
+        assert "the reader reads English, French" in prompt and "write in English" in prompt.replace("write it in", "write in")
+        assert "language of the posts." not in prompt and "language of the bullets." not in prompt
+    assert "- Language: write in the language of the posts." in load_prompt("regular")  # none set: as before
+
+
+def test_a_prompt_without_a_language_line_cannot_take_a_language_setting(tmp_path):
+    from xmd.core.config import Language
+    path = tmp_path / "p.md"
+    path.write_text(TINY, encoding="utf-8")
+    with pytest.raises(ValueError, match="no `- Language:` line"):
+        load_prompt("beta", path, language=Language(("en",), "en"))
+
+
+def test_the_translate_prompt_names_the_target_language():
+    from xmd.summary.prompt import load_detect_prompt, load_translate_prompt
+    assert "into German" in load_translate_prompt("German") and "{target}" not in load_translate_prompt("German")
+    assert "ISO 639-1" in load_detect_prompt() and "name:" not in load_detect_prompt()

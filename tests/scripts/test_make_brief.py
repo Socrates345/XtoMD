@@ -213,13 +213,13 @@ def test_failed_chunks_still_get_a_brief_but_the_exit_code_says_so(monkeypatch, 
     assert world.steps[-1] == "assemble"
 
 
-def test_the_digests_and_the_compression_are_passed_on(monkeypatch, tmp_path):
+def test_the_digests_and_the_reading_time_are_passed_on(monkeypatch, tmp_path):
     world = World(monkeypatch, tmp_path)
 
-    make_brief.main(["--24h", "--full", "--quick", "--compression", "10%"])
+    make_brief.main(["--24h", "--full", "--quick", "--time", "10min"])
 
     assert world.call("digest") == ("digest", "24h", True, True)
-    assert _after(world.call("run_system")[1], "--compression") == "0.1"
+    assert _after(world.call("run_system")[1], "--time") == "10"
 
 
 def test_each_window_flag_picks_its_window_for_the_digest(monkeypatch, tmp_path):
@@ -252,9 +252,9 @@ def test_the_digest_step_says_which_window_it_covers(monkeypatch, tmp_path, caps
     assert "everything from the last 24 hours" in capsys.readouterr().out
 
 
-def test_compression_is_left_to_run_system_when_not_given(monkeypatch, tmp_path):
+def test_without_a_reading_time_the_size_is_left_to_run_system(monkeypatch, tmp_path):
     world = World(monkeypatch, tmp_path)
 
     make_brief.main(["--24h"])
 
-    assert "--compression" not in world.call("run_system")[1]
+    assert "--time" not in world.call("run_system")[1] and "--compression" not in world.call("run_system")[1]

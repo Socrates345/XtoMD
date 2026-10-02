@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"only if the runtime wants one (default: ${API_KEY_ENV_VAR})")
     ap.add_argument("--smoke", action="store_true", help="run smoke_engine.py instead of make_brief.py: "
                     "~1 minute, no brief written")
-    args, rest = ap.parse_known_args(argv)  # unrecognized flags (--24h, --compression, ...) pass straight through
+    args, rest = ap.parse_known_args(argv)  # unrecognized flags (--24h, --time, ...) pass straight through
 
     lms = _lms(args.lms_path)
     base_url = f"http://127.0.0.1:{args.port}/v1"

@@ -45,8 +45,10 @@ import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from itertools import groupby
+from typing import Callable
 from urllib.parse import quote
 
+from ..core.config import LANGUAGE_NAMES
 from ..core.models import URL, FeedItem
 from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
 from .trending import DEFAULT_SIMILARITY, Story, find_stories
@@ -175,19 +177,48 @@ def _when(item: FeedItem) -> str:
     return item.published.astimezone(timezone.utc).strftime("%m-%d %H:%M")
 
 
-def _story_lines(stories: list[Story], priority_sources: frozenset[str], limit: int) -> list[str]:
+# the brief's translation of a text shown word for word (xmd.summary.translate.Translation: .lang, .text,
+# .unsupported), or None to show it as posted
+Translated = Callable[[str], "object | None"]
+
+
+def _not_in_original(translations: list) -> str:
+    """The ⚠ a translation gets for a number, handle or ticker its original doesn't have, or ""."""
+    missing = list(dict.fromkeys(w for t in translations for w in t.unsupported))
+    return f" ⚠ not in the original: {_md(', '.join(missing))}" if missing else ""
+
+
+def _original_line(translations: list, text: str, limit: int, indent: str = "") -> str:
+    """The original under a translated line, quoted, so a doubtful translation can be checked against it."""
+    names = ", ".join(dict.fromkeys(LANGUAGE_NAMES.get(t.lang, t.lang) for t in translations))
+    return f"{indent}> 🌐 *{names}:* {_inline(text, limit)}"
+
+
+def _story_lines(
+    stories: list[Story], priority_sources: frozenset[str], limit: int, translated: Translated | None = None,
+) -> list[str]:
     """One line per story: how many sources, a link to each source's own
     post, and what it was about. Stories with a priority source (★) first,
-    then the most widely repeated — find_stories already orders by that."""
+    then the most widely repeated — find_stories already orders by that.
+    With `translated` (the brief), a story in a language the reader doesn't
+    read shows its translation, with the original quoted under it."""
     lines = []
     for story in sorted(stories, key=lambda s: not any(x in priority_sources for x in s.sources)):
         star = "★ " if any(x in priority_sources for x in story.sources) else ""
         links = " · ".join(f"[{_md(i.source)}]({i.url})" for i in story.first_by_source)
-        lines.append(f"- **×{len(story.sources)}** {star}{links} — {_inline(story.text, limit)}")
+        found = translated(story.text) if translated else None
+        if found:
+            lines.append(f"- **×{len(story.sources)}** {star}{links} — {_inline(found.text, limit)}"
+                         + _not_in_original([found]))
+            lines.append(_original_line([found], story.text, limit, indent="  "))
+        else:
+            lines.append(f"- **×{len(story.sources)}** {star}{links} — {_inline(story.text, limit)}")
     return lines
 
 
-def _trending_block(stories: list[Story], priority_sources: frozenset[str], limit: int) -> list[str]:
+def _trending_block(
+    stories: list[Story], priority_sources: frozenset[str], limit: int, translated: Translated | None = None,
+) -> list[str]:
     if not stories:
         return []
     return [
@@ -197,7 +228,7 @@ def _trending_block(stories: list[Story], priority_sources: frozenset[str], limi
         f"🔥 {_stories(len(stories))} posted or amplified by 2+ of your sources"
         " (★ = a priority source is in it)",
         "",
-        *_story_lines(stories, priority_sources, limit),
+        *_story_lines(stories, priority_sources, limit, translated),
         "",
     ]
 
@@ -357,14 +388,19 @@ def build_markdown(
     return "\n".join(lines)
 
 
-def _post_line(item: FeedItem, limit: int) -> str:
+def _line_text(item: FeedItem) -> str:
+    """What a one-liner says: the post's own words, and the post it retweets or quotes."""
     text = item.own_comment
     if item.is_pure_retweet:
         text = f"🔁 @{item.retweet_of_author}: {item.retweet_of_text}"
     elif item.retweet_of_author:  # a quote with commentary: keep what it's responding to
         text = f"{text} ↩ @{item.retweet_of_author}: {item.retweet_of_text}"
+    return text
+
+
+def _post_line(item: FeedItem, limit: int) -> str:
     head = " · ".join(
-        p for p in (f"**{_md(item.source)}**", _when(item), _inline(text, limit)) if p
+        p for p in (f"**{_md(item.source)}**", _when(item), _inline(_line_text(item), limit)) if p
     )
     return f"- {head} [↗]({item.url})"
 

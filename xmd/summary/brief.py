@@ -24,17 +24,21 @@ from __future__ import annotations
 import html
 import json
 import re
+import shutil
+import tempfile
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 from .chunk import LEVEL_ORDER
+from ..core.config import LANGUAGE_NAMES
 from ..core.models import URL, FeedItem
+from ..core.store import Store
 from ..digest.render import (
-    DEFAULT_MEDIA_CHARS, DEFAULT_RETWEET_CHARS, DEFAULT_SNIPPET_CHARS, _count, _fragment, _grouped_chronological,
-    _inline, _md, _post_line, _retweet_line, _stories, _story_lines, _trending_block, body_md, section_key,
-    section_key_for, section_label, sectioned,
+    DEFAULT_MEDIA_CHARS, DEFAULT_RETWEET_CHARS, DEFAULT_SNIPPET_CHARS, Translated, _count, _fragment,
+    _grouped_chronological, _inline, _line_text, _md, _not_in_original, _original_line, _post_line, _retweet_line,
+    _stories, _story_lines, _trending_block, body_md, section_key, section_key_for, section_label, sectioned,
 )
 from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
 from .topics import Topic
@@ -47,6 +51,7 @@ WPM_DIAGONAL = 400
 SECONDS_PER_IMAGE = 4
 LINES_PER_MINUTE = 40  # the reader's own pace, measured 2026-09-20: 200 lines in 5 minutes, links clicked included
 MAX_CITES = 4  # links shown per item; the rest are counted
+PRIORITY_LINE_CHARS = 280  # a priority tweet cut to one line (see Cuts) keeps about a tweet's worth
 
 _ITEM_ID = re.compile(r"<!-- item:([0-9a-f]+) -->")
 _STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})-(\d{4})")
@@ -75,6 +80,22 @@ class Brief:
     stats: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class Cuts:
+    """What a brief leaves out to fit a reading time (`--time`, see budget.py). The default cuts nothing."""
+
+    minutes: float | None = None  # the reading time aimed at, for the header
+    priority_one_liners: bool = False  # priority tweets as one line each, no pictures
+    pictures: frozenset[str] | None = None  # image tweets (by item id) shown with their pictures; None: all
+    captions: frozenset[str] | None = None  # of the others, those still given a line; the rest are a list of links
+
+    def keeps_pictures(self, item: FeedItem) -> bool:
+        return self.pictures is None or item.id in self.pictures
+
+    def keeps_caption(self, item: FeedItem) -> bool:
+        return self.captions is None or item.id in self.captions
+
+
 def measure(text: str) -> tuple[int, int]:
     """(words a reader meets, images) in some of the brief's markdown: link text counts, URLs, tags,
     comments and markup do not. One measure for every system, as the plan asks."""
@@ -86,6 +107,16 @@ def measure(text: str) -> tuple[int, int]:
 
 def reading_minutes(words: int, images: int, wpm: int) -> float:
     return words / wpm + images * SECONDS_PER_IMAGE / 60
+
+
+def pace_minutes(lines: int, images: int) -> float:
+    """Minutes at the reader's own pace: LINES_PER_MINUTE non-blank lines, plus SECONDS_PER_IMAGE a picture."""
+    return lines / LINES_PER_MINUTE + images * SECONDS_PER_IMAGE / 60
+
+
+def _content_lines(lines: list[str]) -> int:
+    """Non-blank lines as the file will have them: an entry may hold several (a tweet's paragraphs)."""
+    return sum(1 for entry in lines for line in entry.split("\n") if line.strip())
 
 
 def digest_item_ids(markdown: str) -> list[str]:
@@ -104,6 +135,27 @@ def load_item_ids(export: Path, full: Path) -> list[str] | None:
     if full.exists():
         return digest_item_ids(full.read_text(encoding="utf-8"))
     return None
+
+
+def digest_items(ids: list[str], storage: Path, history_days: int = 0) -> tuple[list[FeedItem], list[FeedItem]]:
+    """(the digest's items, rebuilt from their `ids`; what was published in the `history_days` before the earliest
+    of them, the "louder than usual" baseline). Read from a copy of the database at `storage`, so the real one is
+    never touched, and flagged after silence as the digest did, so the same tweets are priority."""
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "xmd.db"
+        shutil.copy2(storage, copy)
+        store = Store(copy)
+        try:
+            items = store.get_many(ids)
+            store.flag_after_silence(items)
+            history: list[FeedItem] = []
+            if history_days:
+                dated = [i.published for i in items if i.published]
+                since = min(dated) if dated else datetime.now(timezone.utc)
+                history = store.published_between(since - timedelta(days=history_days), since)
+        finally:
+            store.close()
+    return items, history
 
 
 def digest_time(stem: str) -> datetime | None:
@@ -127,10 +179,11 @@ def window_kind(export_text: str) -> str:
     return next((kind for label, kind in _WINDOW_LABEL.items() if f"({label})" in first_line), "")
 
 
-def brief_stamp(now: datetime, kind: str) -> str:
-    """The brief's file stem: date, the hour in 12-hour form (`9pm`, `6am`) and the window kind, e.g.
-    `2026-09-22-9pm-24h`. `kind` is "" when `window_kind` couldn't read it (an older export): the stem
-    then carries no window suffix."""
+def brief_stamp(now: datetime, kind: str, tz: tzinfo) -> str:
+    """The brief's file stem: date, the hour in 12-hour form (`9pm`, `6am`) on the `tz` clock (config's
+    `timezone:`) and the window kind, e.g. `2026-09-22-9pm-24h`. `kind` is "" when `window_kind` couldn't
+    read it (an older export): the stem then carries no window suffix."""
+    now = now.astimezone(tz)
     hour = now.strftime("%I%p").lstrip("0").lower()
     return f"{now.strftime('%Y-%m-%d')}-{hour}" + (f"-{kind}" if kind else "")
 
@@ -190,25 +243,70 @@ def summary_items(
     return kept, dropped
 
 
-def _priority_block(item: FeedItem) -> list[str]:
+def _localized(item: FeedItem, translated: Translated | None) -> tuple[FeedItem, list]:
+    """`item` with its own words and the post it retweets swapped for their translations, where `translated` has
+    one, and the translations used (none: `item` itself comes back)."""
+    if translated is None:
+        return item, []
+    own = translated(item.own_comment) if item.own_comment else None
+    quoted = translated(item.retweet_of_text) if item.retweet_of_text else None
+    if not own and not quoted:
+        return item, []
+    changes: dict[str, str] = {}
+    if own:
+        changes.update(full_text=own.text, text=own.text)
+    elif not item.own_comment:  # a retweet's copy of the original: it must not reappear beside the translation
+        changes.update(full_text="", text="")
+    if quoted:
+        changes["retweet_of_text"] = quoted.text
+    return replace(item, **changes), [t for t in (own, quoted) if t]
+
+
+def _quoted_original(item: FeedItem, found: list) -> list[str]:
+    """A translated priority tweet's original, whole, as a quote under the translation."""
+    names = ", ".join(dict.fromkeys(LANGUAGE_NAMES.get(t.lang, t.lang) for t in found))
+    text = f"🌐 *{names}:* {body_md(item)}"
+    return [f"> {line}" if line else ">" for line in text.split("\n")] + [""]
+
+
+def _priority_block(item: FeedItem, translated: Translated | None = None) -> list[str]:
     """A priority tweet in full, like render._item_block but with its pictures first and a blank line after
-    each, and the text below them as their caption."""
+    each, and the text below them as their caption; translated, with the original quoted under it."""
     heading = f"#### {item.source} <!-- item:{item.id} --> [Post Link]({item.url})"
     if item.published:
         heading += f" · {item.published.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC"
     lines = [heading, ""]
     for image in item.images:
         lines += [f"![]({image})", ""]
-    body = body_md(item)
+    shown, found = _localized(item, translated)
+    body = body_md(shown)
+    if found:
+        return lines + [body + _not_in_original(found), ""] + _quoted_original(item, found)
     return lines + ([body, ""] if body else [])
 
 
-def _render_priority(items: list[FeedItem], priority_sources: frozenset[str]) -> list[str]:
+def _render_priority(
+    items: list[FeedItem], priority_sources: frozenset[str], translated: Translated | None = None,
+) -> list[str]:
     lines: list[str] = []
     for _source, batch in _grouped_chronological(items, priority_sources):
         for item in batch:
-            lines += (["---", ""] if lines else []) + _priority_block(item)
+            lines += (["---", ""] if lines else []) + _priority_block(item, translated)
     return lines
+
+
+def _one_liner(item: FeedItem, limit: int, translated: Translated | None, caption: bool = False) -> list[str]:
+    """A post as one line (a list entry, or with `caption` an image's caption), translated where it has to be,
+    with the original quoted under it."""
+    shown, found = _localized(item, translated)
+    if caption:
+        line = _post_line(shown, limit)[2:]  # [2:] drops the list dash
+    else:
+        line = _retweet_line(shown, limit) if shown.is_pure_retweet else _post_line(shown, limit)
+    if not found:
+        return [line]
+    original = item.retweet_of_text if not caption and item.is_pure_retweet else _line_text(item)
+    return [line + _not_in_original(found), _original_line(found, original, limit, indent="" if caption else "  ")]
 
 
 def _cites(ids: tuple[int, ...], mapping: dict) -> str:
@@ -262,19 +360,27 @@ def build_brief(
     model_line: str = "",
     topics: dict[str, list[Topic]] | None = None,
     summaries: dict[str, str] | None = None,
+    translated: Translated | None = None,
+    cuts: Cuts | None = None,
 ) -> Brief:
     """The brief for the window's `items`, from a run's chunk `records` (see load_run). `mapping`, `post_text`
     and `repeated` come from the frozen export the run read; `levels` are the group levels the run used.
-    `topics` and `summaries` (section label -> ...) open the sections they belong to, when given."""
+    `topics` and `summaries` (section label -> ...) open the sections they belong to, when given. `translated`
+    is asked about every text the brief shows word for word (see translate.py): what it translates is shown
+    translated, the original quoted under it. `cuts` says what to leave out to fit a reading time."""
     levels = levels or {}
     topics, summaries = topics or {}, summaries or {}
     by_url = {i.url: i for i in items}
     tiers = {i.id: tier_of(i, priority_sources, recap_groups) for i in items}
     kept, dropped = summary_items(records, mapping, post_text, repeated, levels, recap_groups)
+    cuts = cuts or Cuts()
     words = Counter()  # by band, for the report
+    band_minutes: Counter = Counter()  # by band, at the reader's pace: what a reading time is fitted with
 
     def band(name: str, lines: list[str]) -> list[str]:
-        words[name] += measure("\n".join(lines))[0]
+        counted_words, images = measure("\n".join(lines))
+        words[name] += counted_words
+        band_minutes[name] += pace_minutes(_content_lines(lines), images)
         return lines
 
     # posts without a usable summary: their chunk failed or was never run
@@ -307,11 +413,20 @@ def build_brief(
 
         if by_tier[MEDIA]:
             block = [f"### 🖼 Images — {len(by_tier[MEDIA])}", ""]
-            for _source, batch in _grouped_chronological(by_tier[MEDIA], priority_sources):
-                for item in batch:
-                    for image in item.images:  # pictures first, each followed by a blank line, then the caption
-                        block += [f"![]({image})", ""]
-                    block += [_post_line(item, media_chars)[2:], ""]  # [2:] drops the list dash: it is a caption
+            grouped = [i for _source, batch in _grouped_chronological(by_tier[MEDIA], priority_sources) for i in batch]
+            for item in (i for i in grouped if cuts.keeps_pictures(i)):
+                for image in item.images:  # pictures first, each followed by a blank line, then the caption
+                    block += [f"![]({image})", ""]
+                block += [*_one_liner(item, media_chars, translated, caption=True), ""]
+            captioned = [i for i in grouped if not cuts.keeps_pictures(i) and cuts.keeps_caption(i)]
+            for item in captioned:  # cut to fit a reading time: a line, and the picture a click away
+                first, *rest = _one_liner(item, snippet_chars, translated)
+                block += [first.replace("- ", "- 🖼 ", 1), *rest]
+            linked = [i for i in grouped if not cuts.keeps_pictures(i) and not cuts.keeps_caption(i)]
+            if captioned:
+                block.append("")
+            if linked:
+                block += [f"🖼 {len(linked)} more: " + " · ".join(f"[{_md(i.source)}]({i.url})" for i in linked), ""]
             body += band("images", block)
             shown += len(by_tier[MEDIA])
 
@@ -332,8 +447,8 @@ def build_brief(
             block = [f"### Not summarized — {_count(len(left), 'post')}", "",
                      "*The model gave no usable summary for these, so they are shown as one-liners.*", ""]
             for _source, batch in _grouped_chronological(left, priority_sources):
-                block += [(_retweet_line(i, retweet_chars) if i.is_pure_retweet else _post_line(i, snippet_chars))
-                          for i in batch]
+                for i in batch:
+                    block += _one_liner(i, retweet_chars if i.is_pure_retweet else snippet_chars, translated)
             body += band("not summarized", block + [""])
             shown += len(left)
 
@@ -347,7 +462,7 @@ def build_brief(
                 block += [*(_item_line(i, mapping) for i in recap_items), ""]
             if recap_stories[key]:
                 block += [f"**Repeated in this group — {len(recap_stories[key])}**", "",
-                          *_story_lines(recap_stories[key], priority_sources, snippet_chars), ""]
+                          *_story_lines(recap_stories[key], priority_sources, snippet_chars, translated), ""]
             body += band("recap", block)
             shown += len(recap_items) or 1
 
@@ -356,11 +471,17 @@ def build_brief(
             sections.append((label_, shown, [f'<a id="{html.escape(label_)}"></a>', f"## {label_}", "", *body]))
 
     priority = [i for i in items if tiers[i.id] == PRIORITY]
+    if cuts.priority_one_liners:
+        one_liners = [line for _source, batch in _grouped_chronological(priority, priority_sources)
+                      for i in batch for line in _one_liner(i, PRIORITY_LINE_CHARS, translated)]
+        priority_body = ["*Cut to one line each to fit the reading time; the full tweets are behind the links.*",
+                         "", *one_liners, ""]
+    else:
+        priority_body = _render_priority(priority, priority_sources, translated)
     priority_lines = band("priority", [
-        '<a id="★ Priority"></a>', "## ★ Priority", "",
-        *_render_priority(priority, priority_sources),
+        '<a id="★ Priority"></a>', "## ★ Priority", "", *priority_body,
     ]) if priority else []
-    trending_lines = band("trending", _trending_block(general, priority_sources, snippet_chars))
+    trending_lines = band("trending", _trending_block(general, priority_sources, snippet_chars, translated))
 
     # the top of the file: the date, then only how long it takes and where the full digest is
     cited = {n for i in kept for n in i.ids}
@@ -396,11 +517,12 @@ def build_brief(
 
     text = "\n".join(lines)
     total_words, total_images = measure(text)
-    content_lines = sum(1 for line in lines if line.strip())
+    content_lines = _content_lines(lines)
     normal = reading_minutes(total_words, total_images, WPM_NORMAL)
     diagonal = reading_minutes(total_words, total_images, WPM_DIAGONAL)
-    yours = content_lines / LINES_PER_MINUTE + total_images * SECONDS_PER_IMAGE / 60
-    lines[estimate_at] = f"**~{max(1, round(yours))} min read**" + (f" · [full digest]({full_name})" if full_name else "")
+    yours = pace_minutes(content_lines, total_images)
+    lines[estimate_at] = (f"**~{max(1, round(yours))} min read**" + _fitted_note(cuts, items, tiers)
+                          + (f" · [full digest]({full_name})" if full_name else ""))
     if model_line:  # provenance for whoever debugs it, invisible when reading
         lines.append(f"<!-- {model_line} -->")
     return Brief("\n".join(lines) + "\n", {
@@ -408,12 +530,27 @@ def build_brief(
         "minutes_at_your_pace": round(yours, 1),
         "minutes_normal": round(normal, 1), "minutes_diagonal": round(diagonal, 1),
         "bands": dict(words),
+        "band_minutes": {name: round(m, 2) for name, m in band_minutes.items()},
         "summary_items": len(kept), "dropped_items": dropped, "flagged_items": flagged,
         "trending_items": sum(1 for i in kept if i.trending),
         "section_summaries": len(summaries), "louder_topics": sum(len(v) for v in topics.values()),
         "posts_without_summary": len(loose), "posts_absent_from_the_database": absent,
         "regular_posts": regular_posts, "regular_posts_cited": regular_cited,
     })
+
+
+def _fitted_note(cuts: Cuts, items: list[FeedItem], tiers: dict[str, str]) -> str:
+    """What the header says was left out to fit the reading time, or "" when nothing was."""
+    if cuts.minutes is None:
+        return ""
+    media = [i for i in items if tiers[i.id] == MEDIA]
+    parts = []
+    with_pictures = sum(1 for i in media if cuts.keeps_pictures(i))
+    if with_pictures < len(media):
+        parts.append(f"{with_pictures} of {_count(len(media), 'image tweet')} with pictures")
+    if cuts.priority_one_liners:
+        parts.append("priority tweets as one-liners")
+    return f" · fitted to {cuts.minutes:g} min" + (f": {', '.join(parts)}" if parts else "")
 
 
 def _filed_of(filed: dict[tuple[str, str], list[BriefItem]], tier: str) -> list[BriefItem]:

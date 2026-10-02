@@ -2,7 +2,7 @@ import traceback
 
 import pytest
 
-from xmd.core.config import load_config, read_group_levels
+from xmd.core.config import Language, load_config, read_group_levels, read_language
 
 X_KEY_YAML = "x:\n  api_key: test-key\n"
 
@@ -115,6 +115,21 @@ def test_tweetapi_rate_limit_from_yaml(tmp_path):
         "  tweetapi_rate_limit_per_minute: 60\n",
     )
     assert load_config(path).tweetapi_rate_limit_per_minute == 60
+
+
+def test_timezone_defaults_to_paris(tmp_path):
+    assert load_config(_setup(tmp_path)).tz.key == "Europe/Paris"
+
+
+def test_timezone_from_yaml(tmp_path):
+    path = _setup(tmp_path, yaml_text=X_KEY_YAML + "timezone: America/New_York\n")
+    assert load_config(path).tz.key == "America/New_York"
+
+
+def test_unknown_timezone_is_a_config_error(tmp_path):
+    path = _setup(tmp_path, yaml_text=X_KEY_YAML + "timezone: Paris\n")
+    with pytest.raises(ValueError, match="timezone"):
+        load_config(path)
 
 
 def test_missing_api_key_raises(tmp_path):
@@ -300,3 +315,37 @@ def test_an_unknown_option_on_a_group_header_is_warned_about_not_silently_ignore
     assert cfg.group_levels == {"news": "low"}  # the typo did not become a level
     assert "unknown option 'hgih' on group 'business'" in caplog.text
     assert "news" not in caplog.text  # and a correct header says nothing
+
+
+def test_no_language_block_leaves_every_post_in_its_own_language(tmp_path):
+    assert load_config(_setup(tmp_path)).language is None
+
+
+def test_language_takes_codes_or_english_names(tmp_path):
+    path = _setup(tmp_path, X_KEY_YAML + "language:\n  accepted: [English, FR, de]\n  translate_to: en\n")
+    lang = load_config(path).language
+    assert (lang.accepted, lang.translate_to) == (("en", "fr", "de"), "en")
+    assert lang.accepted_names == "English, French, German"
+    assert read_language(path) == lang  # the model step reads it without the api key
+
+
+def test_language_with_one_half_missing_fills_it_from_the_other(tmp_path):
+    only_target = _setup(tmp_path, X_KEY_YAML + "language:\n  translate_to: english\n")
+    assert load_config(only_target).language == Language(("en",), "en")
+    only_accepted = _setup(tmp_path, X_KEY_YAML + "language:\n  accepted: [fr, en]\n")
+    assert load_config(only_accepted).language == Language(("fr", "en"), "fr")
+
+
+@pytest.mark.parametrize("block, message", [
+    ("  accepted: [en]\n  translate_to: de\n", "must be one of language.accepted"),
+    ("  accepted: [klingon]\n", "unknown language 'klingon'"),
+    ("  accepted: en\n  translate_to: xx\n", "unknown language 'xx'"),
+    ("  accepted: {en: 1}\n", "must be a list"),
+])
+def test_a_wrong_language_setting_is_named(tmp_path, block, message):
+    with pytest.raises(ValueError, match=message):
+        load_config(_setup(tmp_path, X_KEY_YAML + "language:\n" + block))
+
+
+def test_read_language_without_a_settings_file_is_none(tmp_path):
+    assert read_language(tmp_path / "missing.yaml") is None

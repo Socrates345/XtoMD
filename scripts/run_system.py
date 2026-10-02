@@ -9,7 +9,8 @@ failed chunk's line may carry a few words of the model's reply).
     python scripts\\run_system.py --model qwen --dry-run
     python scripts\\run_system.py --model qwen --only regular-01
     python scripts\\run_system.py --model qwen
-    python scripts\\run_system.py --model qwen --compression 10%     # a shorter brief than the default 30%
+    python scripts\\run_system.py --model qwen --time 10           # a brief you can read in about 10 minutes
+    python scripts\\run_system.py --model qwen --compression 10%     # or set the summaries' compression yourself
 
 Before a real run: the server is up, the model is loaded with thinking off and a context
 length of at least 8192 (LM Studio: the model's load settings), and nothing else heavy
@@ -24,8 +25,9 @@ import json
 import os
 import re
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
@@ -35,7 +37,11 @@ from xmd.summary.chunk import (  # noqa: E402
     CHARS_PER_TOKEN, DEFAULT_COMPRESSION, DEFAULT_MAX_INPUT_TOKENS, estimate_tokens, make_chunks, parse_compression,
     parse_export, tier_shares,
 )
-from xmd.core.config import read_group_levels  # noqa: E402
+from xmd.core.config import load_config, read_group_levels, read_language  # noqa: E402
+from xmd.summary.brief import LINES_PER_MINUTE, SECONDS_PER_IMAGE, build_brief, digest_items, load_item_ids  # noqa: E402
+from xmd.summary.budget import (  # noqa: E402
+    MAX_COMPRESSION, PRIORITY_SHARE, SUMMARY_SHARE, bare_cuts, choose_compression, parse_minutes, summary_lines,
+)
 from xmd.summary.engine import (  # noqa: E402
     API_KEY_ENV_VAR, DEFAULT_BASE_URL, Engine, EngineError, ModelChoiceError, choose_model, list_models,
 )
@@ -82,9 +88,99 @@ def _compression(text: str) -> float:
         raise argparse.ArgumentTypeError(str(exc)) from None
 
 
+def time_budget(text: str) -> float:
+    """--time's argument (make_brief.py and assemble_brief.py use it too)."""
+    try:
+        return parse_minutes(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+def _fit_compression(minutes: float, export: Path, digests: Path, config_path: str, mapping: dict, posts, repeated,
+                     levels: dict, max_input_tokens: int) -> float | None:
+    """The compression for a brief of `minutes`, having said how the time is shared: the brief is laid out without
+    summaries (priority and image tweets, trending...) and measured, whole and at its barest, and the summaries'
+    lines are added at each compression (see budget.py). None, having said why, when the digest's tweets can't be
+    read."""
+    try:
+        config = load_config(config_path)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"config error: {exc}")
+        return None
+    ids = load_item_ids(export, digests / f"{export.stem}.md")
+    if ids is None:
+        print(f"{export.with_suffix('.items.json')} is missing: --time needs it to measure the brief; use --compression")
+        return None
+    items, _history = digest_items(ids, config.storage)
+    no_summaries = [{"chunk": "plan", "tier": "regular", "ids": [p.n for p in posts], "ok": True, "reply": {"items": []}}]
+    now, post_text = datetime.now(timezone.utc), {p.n: p.text for p in posts}
+
+    def build(cuts=None):
+        return build_brief(
+            items, now, no_summaries, mapping, post_text, repeated,
+            priority_sources=frozenset(s.name for s in config.sources if s.priority), recap_groups=config.recap_groups,
+            levels=levels, similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
+            retweet_chars=config.retweet_chars, media_chars=config.media_chars, cuts=cuts,
+        )
+
+    def sized(cuts):
+        barest = build(cuts)
+        return barest, choose_compression(
+            minutes, base.stats["minutes_at_your_pace"], barest.stats["minutes_at_your_pace"],
+            lambda c: summary_lines(make_chunks(posts, repeated, tier_shares(c), max_input_tokens, levels=levels)))
+
+    base = build()
+    bare = bare_cuts(minutes, base)
+    barest, sizing = sized(bare)
+    if (sizing.summary_minutes > minutes - barest.stats["minutes_at_your_pace"] and not bare.priority_one_liners
+            and base.stats["band_minutes"].get("priority")):  # as plan_cuts will: in full, the brief can't fit
+        bare = replace(bare, priority_one_liners=True)
+        barest, sizing = sized(bare)
+    for line in _sizing_lines(minutes, sizing, bare.priority_one_liners, base.stats, barest.stats):
+        print(line)
+    return sizing.compression
+
+
+def _sizing_lines(minutes: float, sizing, one_liners: bool, whole: dict, barest: dict) -> list[str]:
+    """What --time decided, for the console: how long the brief is uncut, and how the time is shared. `whole` and
+    `barest` are the stats of the brief without its summaries, uncut and at its barest."""
+    pace = f"{LINES_PER_MINUTE} lines a minute, {SECONDS_PER_IMAGE} s a picture"
+    if sizing.whole_minutes <= minutes:
+        return [f"time {minutes:g} min ({pace}): the whole brief takes ~{sizing.whole_minutes:.0f} min at most, "
+                f"so nothing is cut (compression {sizing.compression:.2f})"]
+    leaves = minutes - barest["minutes_at_your_pace"]  # what the summaries and the image tweets have between them
+    half = SUMMARY_SHARE * minutes <= leaves
+    limit = "half the time" if half else f"the ~{max(leaves, 0):.1f} min the rest leaves"
+    if sizing.compression == MAX_COMPRESSION:
+        why = "the usual one: they have the room"
+    elif sizing.fits:
+        why = f"lowered from {MAX_COMPRESSION:.2f} to fit {limit}"
+    else:
+        why = f"the lowest there is, though more than {limit}"
+    priority = whole["band_minutes"].get("priority", 0)
+    lines = [f"time {minutes:g} min ({pace}): uncut, this brief would take ~{sizing.whole_minutes:.0f} min. So:",
+             f"  summaries        ~{sizing.summary_minutes:.1f} min at most, compression {sizing.compression:.2f} ({why})"]
+    if priority:
+        cause = "more than half the time" if priority > PRIORITY_SHARE * minutes else "too long for the brief to fit"
+        lines.append(f"  priority tweets  ~{barest['band_minutes'].get('priority', 0):.1f} min, "
+                     + (f"one line each (in full ~{priority:.1f} min: {cause})" if one_liners else "in full"))
+    lines.append(f"  image tweets     ~{max(leaves - sizing.summary_minutes, 0):.1f} min of the "
+                 f"~{whole['band_minutes'].get('images', 0):.1f} they take whole, plus what the summaries leave unused: "
+                 "pictures first, then a line each, then links")
+    if sizing.summary_minutes > leaves:
+        lines.append(f"  that is more than {minutes:g} min: the brief may come out longer than asked")
+    lines.append("  the summaries are sized now; the priority and image tweets are cut when the brief is assembled")
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Summarize a digest export with a local model and save the raw replies.")
-    ap.add_argument("--compression", type=_compression, default=DEFAULT_COMPRESSION, metavar="RATIO",
+    size = ap.add_mutually_exclusive_group()
+    size.add_argument("--time", type=time_budget, default=None, metavar="MIN",
+                      help="the reading time to aim at, in minutes (10, 30...): the summaries keep the usual compression "
+                           "unless they alone would take more than half of it, and assemble_brief.py cuts image and "
+                           "priority tweets to fit it")
+    size.add_argument("--compression", type=_compression, default=DEFAULT_COMPRESSION, metavar="RATIO",
                     help="summary words / source words for the regular posts: 0.30 or 30%% (the default) keeps about 30%% "
                          "of their words, 0.10 about 10%%. Retweets and the recap group keep their own fixed shares")
     ap.add_argument("--model", default="", help="model id, or part of one; omit it when the server offers just one")
@@ -94,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--export", default="", help="export .txt to brief (default: the newest in DIGESTS/.export)")
     ap.add_argument("--digests-dir", default="digests")
     ap.add_argument("--sources-dir", default="sources", help="where x.md is: its `## group | high` / `| low` levels set how much each group keeps")
+    ap.add_argument("--config", default="sources.yaml",
+                    help="sources.yaml: its `language:` says which languages the summaries may keep and which one the rest is written in")
     ap.add_argument("--out-dir", default="", help="where runs are saved (default: DIGESTS/.runs)")
     ap.add_argument("--label", default="", help="name of this run (default: model, compression and time)")
     ap.add_argument("--only", default="", help="comma-separated chunk ids to run, e.g. regular-01,recap-03")
@@ -117,7 +215,18 @@ def main(argv: list[str] | None = None) -> int:
     posts, repeated = parse_export(export.read_text(encoding="utf-8"), mapping)
     x_md = Path(args.sources_dir) / "x.md"
     levels = read_group_levels(x_md) if x_md.exists() else {}
+    if args.time:
+        compression = _fit_compression(args.time, export, digests, args.config, mapping, posts, repeated, levels,
+                                       args.max_input_tokens)
+        if compression is None:
+            return 2
+        args.compression = compression
     chunks = make_chunks(posts, repeated, tier_shares(args.compression), args.max_input_tokens, levels=levels)
+    try:
+        language = read_language(args.config)
+    except ValueError as exc:
+        print(f"config error: {exc}")
+        return 2
     wanted = {c.strip() for c in args.only.split(",") if c.strip()}
     if wanted:
         unknown = wanted - {c.id for c in chunks}
@@ -126,8 +235,10 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         chunks = [c for c in chunks if c.id in wanted]
 
-    system_for = lru_cache(maxsize=None)(load_prompt)
+    system_for = lru_cache(maxsize=None)(partial(load_prompt, language=language))
     print(f"export {export.name}  sha256 {_sha(export)[:16]}...  compression {args.compression:.2f}")
+    if language:
+        print(f"languages: {', '.join(language.accepted)} kept as posted, the rest written in {language.translate_to}")
     print("group levels: " + (", ".join(f"{g}={lv}" for g, lv in sorted(levels.items())) if levels
                               else f"none set in {x_md} (every group is normal)"))
     if args.dry_run or args.stats:
@@ -171,7 +282,8 @@ def main(argv: list[str] | None = None) -> int:
                               on_result=_show if args.stats else None)
 
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", model).strip("-")
-    label = args.label or f"{slug}__c{args.compression:.2f}__{started:%Y%m%d-%H%M%S}" + ("__partial" if wanted else "")
+    budget = f"__t{args.time:g}" if args.time else ""
+    label = args.label or f"{slug}__c{args.compression:.2f}{budget}__{started:%Y%m%d-%H%M%S}" + ("__partial" if wanted else "")
     out = Path(args.out_dir) / label if args.out_dir else digests / ".runs" / label
     write_run(out, {
         "label": label,
@@ -181,8 +293,10 @@ def main(argv: list[str] | None = None) -> int:
                    "temperature": args.temperature, "retries": args.retries, "bound_items": args.bound_items,
                    "warmup_seconds": round(warm.seconds, 1)},
         "compression_ratio": args.compression,
+        "time_budget": args.time,  # minutes; assemble_brief.py fits the brief to it
         "ratios": tier_shares(args.compression),
         "levels": levels,
+        "language": {"accepted": list(language.accepted), "translate_to": language.translate_to} if language else None,
         "chunking": {"max_input_tokens": args.max_input_tokens, "chars_per_token": CHARS_PER_TOKEN,
                      "only": sorted(wanted) or None},
         "export": {"file": export.name, "sha256": _sha(export)},

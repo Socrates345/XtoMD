@@ -1,6 +1,7 @@
 import json
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -205,6 +206,15 @@ def test_the_reading_time_is_lines_at_the_readers_pace_plus_the_pictures_and_the
     assert set(brief.stats["bands"]) >= {"priority", "images", "summary", "retweet themes", "recap"}
 
 
+def test_a_tweet_shown_on_several_lines_counts_every_line_the_reader_meets():
+    tweet = _post(59, "@vip", "my own comment", group="business", retweet_of_author="orig", retweet_of_text="the post quoted")
+    _text, mapping = build_export([tweet], NOW, priority_sources=PRIORITY, recap_groups=RECAP)
+    brief = build_brief([tweet], NOW, [], mapping, {}, [], priority_sources=PRIORITY, recap_groups=RECAP)
+    written = [line for line in brief.markdown.splitlines() if line.strip()]
+    assert "my own comment" in written and any("the post quoted" in line for line in written)  # a line each
+    assert brief.stats["lines"] == len(written) - 1  # all but the reading-time line, filled in after the count
+
+
 def test_the_model_that_wrote_the_brief_is_only_an_invisible_comment_at_the_end():
     md = _brief().markdown
     assert md.rstrip().endswith("<!-- test model -->")  # provenance for debugging, invisible when reading
@@ -267,11 +277,19 @@ def test_window_kind_reads_the_labelled_export_header_or_says_neither():
 
 
 def test_brief_stamp_is_date_hour_ampm_and_window_kind():
-    assert brief_stamp(datetime(2026, 9, 22, 21, 4, tzinfo=timezone.utc), "24h") == "2026-09-22-9pm-24h"
-    assert brief_stamp(datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc), "lastrun") == "2026-09-22-6am-lastrun"
-    assert brief_stamp(datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc), "24h") == "2026-09-22-12am-24h"
-    assert brief_stamp(datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc), "24h") == "2026-09-22-12pm-24h"
-    assert brief_stamp(datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc), "") == "2026-09-22-6am"
+    utc = timezone.utc
+    assert brief_stamp(datetime(2026, 9, 22, 21, 4, tzinfo=utc), "24h", utc) == "2026-09-22-9pm-24h"
+    assert brief_stamp(datetime(2026, 9, 22, 6, 0, tzinfo=utc), "lastrun", utc) == "2026-09-22-6am-lastrun"
+    assert brief_stamp(datetime(2026, 9, 22, 0, 0, tzinfo=utc), "24h", utc) == "2026-09-22-12am-24h"
+    assert brief_stamp(datetime(2026, 9, 22, 12, 0, tzinfo=utc), "24h", utc) == "2026-09-22-12pm-24h"
+    assert brief_stamp(datetime(2026, 9, 22, 6, 0, tzinfo=utc), "", utc) == "2026-09-22-6am"
+
+
+def test_brief_stamp_reads_the_hour_and_date_on_the_configured_clock():
+    paris = ZoneInfo("Europe/Paris")
+    assert brief_stamp(datetime(2026, 9, 28, 16, 0, tzinfo=timezone.utc), "lastrun", paris) == "2026-09-28-6pm-lastrun"
+    assert brief_stamp(datetime(2026, 12, 28, 16, 0, tzinfo=timezone.utc), "24h", paris) == "2026-12-28-5pm-24h"  # winter: UTC+1
+    assert brief_stamp(datetime(2026, 9, 28, 22, 30, tzinfo=timezone.utc), "24h", paris) == "2026-09-29-12am-24h"  # next day
 
 
 def test_measure_counts_link_text_and_images_but_not_urls_or_markup():

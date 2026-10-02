@@ -4,7 +4,7 @@
     python scripts\\make_brief.py --since-last-run     # only what is new since your last digest
     python scripts\\make_brief.py --24h --model qwen   # another model, or part of a name
     python scripts\\make_brief.py --24h --no-fetch     # the store is fresh already
-    python scripts\\make_brief.py --24h --compression 10%    # a shorter brief
+    python scripts\\make_brief.py --24h --time 10       # a brief you can read in about 10 minutes
 
 You must choose the window: `--since-last-run` covers what was fetched since your previous digest, so it is
 a short brief when that was recent; `--24h` covers everything published in the last 24 hours, whatever was
@@ -32,7 +32,6 @@ import assemble_brief  # noqa: E402  (the scripts next to this one)
 import run_system  # noqa: E402
 from xmd import cli  # noqa: E402
 from xmd.core.config import load_config  # noqa: E402
-from xmd.summary.chunk import parse_compression  # noqa: E402
 from xmd.summary.engine import (  # noqa: E402
     API_KEY_ENV_VAR, DEFAULT_BASE_URL, Engine, EngineError, ModelChoiceError, choose_model, list_models,
 )
@@ -41,13 +40,6 @@ DEFAULT_MODEL = "qwen/qwen3.5-9b"  # the setup the README describes and tests
 POLL_SECONDS = 3  # between two looks at a server that is not up yet
 WARMUP_TIMEOUT = 600  # a model that has to be loaded first is slow to answer once
 WINDOW_WORDS = {"since-run": "only what is new since your last digest", "24h": "everything from the last 24 hours"}
-
-
-def _compression(text: str) -> float:
-    try:
-        return parse_compression(text)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def wait_for_server(base_url: str, api_key: str, wait: float) -> list[str] | None:
@@ -83,8 +75,9 @@ def _runs(runs_dir: Path) -> set[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Fetch, digest, summarize with LM Studio and assemble the brief.")
     ap.add_argument("--model", default="", help=f"model id, or part of one (default: {DEFAULT_MODEL})")
-    ap.add_argument("--compression", type=_compression, default=None, metavar="RATIO",
-                    help="share of the regular posts' words the brief keeps, as run_system.py's --compression")
+    ap.add_argument("--time", type=run_system.time_budget, default=None, metavar="MIN",
+                    help="the reading time to fit the brief to, in minutes (10, 30...); without it the brief is as "
+                         "long as the day was")
     window = ap.add_mutually_exclusive_group(required=True)  # no default: a short brief must be asked for
     window.add_argument("--since-last-run", dest="window", action="store_const", const="since-run",
                         help="only what was fetched since your last digest: a short brief when that was recent")
@@ -148,8 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     before = _runs(digests / ".runs")
     code = run_system.main([
         "--export", str(export), "--digests-dir", str(digests), "--model", model, "--base-url", args.base_url,
+        "--config", args.config,
         *(["--api-key", args.api_key] if args.api_key else []),
-        *(["--compression", str(args.compression)] if args.compression is not None else []),
+        *(["--time", f"{args.time:g}"] if args.time is not None else []),
     ])
     new = sorted(_runs(digests / ".runs") - before)
     if not new:  # nothing was run (the server went away): run_system said why
