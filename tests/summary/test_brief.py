@@ -157,8 +157,24 @@ def test_a_post_whose_chunk_was_never_run_is_treated_like_a_failure():
 def test_the_recap_group_is_only_a_picture_with_its_themes():
     md = _brief().markdown
     recap = md[md.index("## X / chat"):]
-    assert "Recap group: 2 items from 2 sources, only the picture: 1 theme.* [full digest](full.md)" in recap  # a short link, not a file name
+    assert "Recap group: 2 items from 2 sources, 1 theme linking 2 of them.* [full digest](full.md)" in recap  # a short link, not a file name
     assert "**Chatter about chatter**" in recap and "chatter one" not in recap  # the posts themselves stay out
+
+
+def test_a_recap_theme_links_every_post_it_cites_with_a_sources_posts_together():
+    """The reader picks a theme to open its posts, so none is counted away as `+N` the way a summary bullet's are."""
+    chat = [_post(20 + k, "@c1" if k < 6 else "@c2", f"chatter {k}", group="chat") for k in range(8)]
+    text, mapping = build_export(chat, NOW, recap_groups=RECAP)
+    posts, _ = parse_export(text, mapping)
+    ids = [p.n for p in posts]
+    theme = {"headline": "Chatter", "detail": "Everyone posted", "ids": ids[:7]}  # the model left the last post out
+    records = [{"chunk": "recap-01", "tier": "recap", "level": "normal", "ids": ids, "ok": True, "reply": {"items": [theme]}}]
+    md = build_brief(chat, NOW, records, mapping, {p.n: p.text for p in posts}, [], recap_groups=RECAP).markdown
+    line = next(l for l in md.splitlines() if l.startswith("- **Chatter**"))
+    assert line.count("](https://x.com/") == 7 and "+" not in line
+    assert "[@c1](https://x.com/c1/status/20) [2](https://x.com/c1/status/21)" in line  # the name once, then numbers
+    assert "[6](https://x.com/c1/status/25) · [@c2](https://x.com/c2/status/26)" in line
+    assert "Recap group: 8 items from 2 sources, 1 theme linking 7 of them.*" in md  # the eighth is in no theme
 
 
 def test_image_tweets_are_kept_whole_in_their_own_section_and_counted():

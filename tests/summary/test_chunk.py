@@ -121,7 +121,7 @@ def test_the_regular_share_is_the_compression_and_the_other_tiers_keep_their_fix
     assert DEFAULT_COMPRESSION == 0.30  # the daily run is scenario A
     for compression in (0.30, 0.10):
         assert tier_shares(compression)[RETWEET] == 0.04  # retweets rank below the handles' own posts
-        assert tier_shares(compression)[RECAP] == 0.06  # the recap group: 2% was "way too short"
+        assert tier_shares(compression)[RECAP] == 0.12  # the recap group: 2% was "way too short", 6% "too summed up"
     assert THEME_SHARES[RECAP] > THEME_SHARES[RETWEET]  # but retweets stay the smaller share
 
 
@@ -167,7 +167,8 @@ def test_the_item_limit_follows_the_target_at_each_tiers_item_length_and_never_e
     assert Chunk("t", RETWEET, many, (), 100).max_items == 3  # plain retweets are themes: 100 / 30
     assert Chunk("t", RETWEET, many, (), 393).max_items == 8  # and a handful at most
     assert Chunk("c", RECAP, many, (), 251).max_items == 8  # 251 / 30 = 8
-    assert Chunk("c", RECAP, many, (), 900).max_items == 14  # a recap gets more themes than retweets, still capped
+    assert Chunk("c", RECAP, many, (), 500).max_items == 17  # a recap gets more themes than retweets: 500 / 30
+    assert Chunk("c", RECAP, many, (), 900).max_items == 20  # still capped
     assert Chunk("r", REGULAR, many[:5], (), 830).max_items == 5  # not more items than posts
     assert Chunk("r", REGULAR, many[:5], (), 1).max_items == 1  # at least one
 

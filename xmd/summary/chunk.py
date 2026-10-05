@@ -39,9 +39,10 @@ MIN_TARGET_WORDS = 20  # a tiny chunk still gets a usable allowance
 # Length is asked for in items as well as words, because a model counts items far better than words:
 # a chunk's reply may have target / (words per item) items, at most the number of posts. Plain retweets
 # and the recap group are briefed as themes, so they get a capped number: a handful of retweet themes, and
-# more for a recap group, which the reader found far too short at 2% and 8 themes a chunk.
+# more for a recap group, which the reader found far too short at 2% and 8 themes a chunk, and still too
+# summed up at 6% and 14: about 70 posts made 5 to 8 themes, each a mix of subjects.
 WORDS_PER_ITEM = {REGULAR: 30, RETWEET: 30, RECAP: 30}
-MAX_THEME_ITEMS = {RETWEET: 8, RECAP: 14}
+MAX_THEME_ITEMS = {RETWEET: 8, RECAP: 20}
 THEME_TIERS = tuple(MAX_THEME_ITEMS)
 MIN_ITEMS_SHARE = 0.25  # fewer items than this share of the limit is not a summary of the chunk (1 item for 58 posts)
 
@@ -49,9 +50,10 @@ MIN_ITEMS_SHARE = 0.25  # fewer items than this share of the limit is not a summ
 # regular posts it is the run's compression ratio, summary words over source words (--compression in
 # scripts/run_system.py): 0.30 is the plan's scenario A, 0.10 its scenario B. Plain retweets and the recap group
 # are the least important, so they keep fixed, smaller shares; recap went 3% -> 2% -> 6% after the reader called
-# 2% "way too short". The plan's scenario C only changes how image tweets are shown, so it is no compression.
+# 2% "way too short", then 12% when 6% was "too summed up" to pick themes from (a theme per ~5 posts instead of
+# ~10). The plan's scenario C only changes how image tweets are shown, so it is no compression.
 DEFAULT_COMPRESSION = 0.30
-THEME_SHARES = {RETWEET: 0.04, RECAP: 0.06}
+THEME_SHARES = {RETWEET: 0.04, RECAP: 0.12}
 
 
 def tier_shares(compression: float) -> dict[str, float]:

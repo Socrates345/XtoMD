@@ -50,7 +50,7 @@ WPM_NORMAL = 230
 WPM_DIAGONAL = 400
 SECONDS_PER_IMAGE = 4
 LINES_PER_MINUTE = 40  # the reader's own pace, measured 2026-09-20: 200 lines in 5 minutes, links clicked included
-MAX_CITES = 4  # links shown per item; the rest are counted
+MAX_CITES = 4  # links shown per item; the rest are counted (a recap theme links them all)
 PRIORITY_LINE_CHARS = 280  # a priority tweet cut to one line (see Cuts) keeps about a tweet's worth
 
 _ITEM_ID = re.compile(r"<!-- item:([0-9a-f]+) -->")
@@ -314,11 +314,22 @@ def _cites(ids: tuple[int, ...], mapping: dict) -> str:
     return " · ".join(links) + (f" +{len(ids) - MAX_CITES}" if len(ids) > MAX_CITES else "")
 
 
+def _all_cites(ids: tuple[int, ...], mapping: dict) -> str:
+    """Every cited post as a link, for a recap theme, which the reader picks to open its posts: a source's
+    posts together, its name linking the first and a number each of the others."""
+    by_source: dict[str, list[str]] = defaultdict(list)
+    for n in ids:
+        by_source[mapping[str(n)]["source"]].append(mapping[str(n)]["url"])
+    return " · ".join(
+        " ".join(f"[{k + 1 if k else _md(source)}]({url})" for k, url in enumerate(urls))
+        for source, urls in by_source.items())
+
+
 def _item_line(item: BriefItem, mapping: dict) -> str:
     line = ("🔥 " if item.trending else "") + f"**{_inline(item.headline, 0)}**"
     if item.detail:
         line += f" — {_inline(item.detail, 0)}"
-    line += f" ({_cites(item.ids, mapping)})"
+    line += f" ({(_all_cites if item.tier == RECAP else _cites)(item.ids, mapping)})"
     if item.unsupported:
         line += f" ⚠ not in the cited posts: {_md(', '.join(item.unsupported))}"
     return f"- {line}"
@@ -454,9 +465,10 @@ def build_brief(
 
         if by_tier[RECAP]:
             recap_items = filed[(label_, RECAP)]
-            picture = _count(len(recap_items), "theme") if recap_items else "no usable summary"
+            linked = len({n for i in recap_items for n in i.ids})  # the rest are in no theme: only the full digest has them
+            picture = f"{_count(len(recap_items), 'theme')} linking {linked} of them" if recap_items else "no usable summary"
             note = (f"*Recap group: {_count(len(by_tier[RECAP]), 'item')} from "
-                    f"{_count(len({i.source for i in by_tier[RECAP]}), 'source')}, only the picture: {picture}.*")
+                    f"{_count(len({i.source for i in by_tier[RECAP]}), 'source')}, {picture}.*")
             block = ["### Recap", "", note + (f" [full digest]({full_name})" if full_name else ""), ""]
             if recap_items:
                 block += [*(_item_line(i, mapping) for i in recap_items), ""]

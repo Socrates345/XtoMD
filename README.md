@@ -109,7 +109,7 @@ Run all commands from the repo root. `--config` and `--version` go before the su
 **`sources/x.md`**: X handle per line (see `sources.example/x.md`).
 
 - `priority`: the source's tweets sort first in their section, stay whole in the quick digest and appear in full under **★ Priority** in the brief. Also applies, unmarked, to a tweet from someone who hadn't posted in over 15 days (a source with no earlier post in your database is left alone — it can't be told from one you just added).
-- `recap` (group option): a group only worth its overall picture. The quick digest collapses it; the brief keeps about 6% of its words; the full digest still lists every tweet.
+- `recap` (group option): a group only worth its overall picture. The quick digest collapses it; the brief sorts it into themes (about 12% of its words, roughly one theme per 5 posts), each linking every post it groups; the full digest still lists every tweet.
 - `high` or `low` (`normal` is the default): how much of the group the brief keeps, ×1.5 or ×0.5 of the usual share. A recap group ignores a level.
 
 **`sources.yaml`**: your API keys and settings — see `sources.example.yaml`.
