@@ -56,6 +56,8 @@ scripts/make_brief.py                                                |
 | 2 | Bad arguments, or a model name the server does not have |
 | 75 | Another brief was being made on this machine |
 
+**A brief asked for from the phone survives a lost connection.** A brief takes minutes, and in that time a phone changes network or goes to sleep. So `ssh-entry.sh` starts `brief.sh` in a session of its own, writing to a file, and only shows the phone that file as it grows. If the connection drops, the showing stops and the VPS finishes the brief anyway. The phone then says `the connection to the VPS failed or was lost` (exit 255) and downloads nothing: tap `brief-vps-latest` a few minutes later. While the run is connected, the phone also sends a keep-alive every 30 seconds, so a quiet stretch does not make a mobile network drop it.
+
 ### State
 
 Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 days of history. They are not synchronized, and nothing breaks when they drift:
@@ -105,7 +107,25 @@ XMD_LLM_EXTRA_BODY='{"venice_parameters":{"disable_thinking":true,"include_venic
 - `disable_thinking`: Qwen 3.5 thinks by default and would spend its reply budget reasoning, so replies would come back empty. This is LM Studio's "untick Thinking", for Venice.
 - `include_venice_system_prompt: false`: keeps Venice's own instructions out, so the model reads only `prompts/`.
 
-The four `XMD_LLM_*` variables are also read by `make_brief.py`, `run_system.py` and `smoke_engine.py` when you run them by hand; `--base-url`, `--model`, `--api-key` and `--extra-body` override them. `assemble_brief.py` reuses the server and extra body the run recorded. To use them outside `brief.sh`, load the file first: `set -a; . ./.env; set +a`.
+The four `XMD_LLM_*` variables are also read by `make_brief.py`, `run_system.py` and `smoke_engine.py` when you run them by hand; `--base-url`, `--model`, `--api-key` and `--extra-body` override them. `assemble_brief.py` reuses the server and extra body the run recorded.
+
+### Loading `.env` by hand
+
+`deploy/brief.sh` reads `.env` itself, so the timer and the phone's buttons need nothing. A script you start yourself (`smoke_engine.py`, `make_brief.py`, `run_system.py`) only sees the settings once you have loaded them into your shell, from the repo's folder:
+
+```bash
+set -a; . ./.env; set +a
+```
+
+| Part | What it does |
+| --- | --- |
+| `set -a` | From here on, every variable the shell defines is also exported: the programs you start receive it. |
+| `. ./.env` | Reads `.env` as if you had typed its lines. Each `NAME=value` line becomes a variable. |
+| `set +a` | Turns the automatic export off again. |
+
+- **Without it** the script falls back to its defaults and looks for LM Studio on `127.0.0.1`.
+- **It lasts for that login only.** After logging out and back in, run it again.
+- **It prints nothing when it works.** `echo $XMD_LLM_MODEL` should answer `qwen3-5-9b`. Do not echo `XMD_LLM_API_KEY`: the key would stay on screen.
 
 ## Commands
 
@@ -242,9 +262,12 @@ systemctl daemon-reload
 | `LM Studio's server is not answering at http://127.0.0.1:1234/v1` on the VPS or phone | `.env` is missing or has no `XMD_LLM_BASE_URL`, so the scripts fell back to the laptop's default. |
 | Smoke test: `FAIL` on line 2 or 3 with `HTTP 400`, or `does not enforce maxItems` | Venice does not take the item bounds: see [Limits](#limits). |
 | Smoke test: `cut off by the 2300-token cap after N item(s) of at most 20` | The model's items are longer than a real chunk has room for (100 tokens each). Run it again: if it repeats, expect some chunks under "Not summarized" in a brief. |
-| `a brief is already being made on this machine` (exit 75) | The timer's run and yours overlapped. Wait a few minutes, then `brief-vps-latest`. |
+| `a brief is already being made on this machine` (exit 75) | The timer's run and yours overlapped, or you asked again after a lost connection while the first brief was still being finished. Wait a few minutes, then `brief-vps-latest`. |
+| `the connection to the VPS failed or was lost` on the phone | No network, or it dropped during the run. A brief that had started is finished on the VPS all the same: `brief-vps-latest` in a few minutes. If it never arrives, the run had not started: ask again. |
+| Nothing new for a while after `[2/5] fetch` | The fetch is the long step: the X backend limits how fast accounts are read. It prints `fetching sources: N/TOTAL` every 30 seconds. |
 | `allowed: run 24h\|since [MINUTES] \| pull [DAYS]` | The VPS refused a request the phone's key may not make. That is the limit working. |
-| `Permission denied (publickey)` from the phone | The key's line in `authorized_keys` is broken over two lines, or `~/.ssh/config` names another key. |
+| `Permission denied (publickey)` from the phone | The server does not know the key the phone offers. Compare fingerprints: `ssh-keygen -lf ~/.ssh/authorized_keys` on the VPS as `xmd`, `ssh-keygen -lf ~/.ssh/id_xmd.pub` in Termux. **Not listed on the VPS:** the line was added as root (so to root's file), glued to the end of the laptop's line (the VPS then lists one key, with `command="bash ...` in the middle of its line), or changed while being copied; [step 3.3](remote-setup.md#33-the-key) has the repair for each. **Listed:** the phone offers another key or asks another user: `ssh -G xmd-vps \| grep -E "^(hostname\|user\|identityfile) "` must show the server's address, `xmd` and `id_xmd`, and the command must be `ssh xmd-vps`, not `ssh xmd@...`. |
+| `config error: ...` as soon as `brief.sh` starts | `sources.yaml` on this machine: the message names the file or the setting. A path setting left empty (`storage:`, `digest_dir:`) means its default, `xmd.db` and `digests`. |
 | The timer's run fails with `Read-only file system` | `storage:` or `digest_dir:` in `sources.yaml` points outside the repo, the only place the unit may write. |
 | `no .../.venv/bin/python` | The virtual environment was not made on this machine: `python3 -m venv .venv && .venv/bin/pip install -e .` |
 | A button does nothing | Settings > Apps > Termux > **Display over other apps**: allow. |

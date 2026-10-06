@@ -87,6 +87,7 @@ ufw allow OpenSSH && ufw --force enable
 adduser --disabled-password --gecos "" xmd
 install -d -m 700 -o xmd -g xmd /home/xmd/.ssh
 install -m 600 -o xmd -g xmd /root/.ssh/authorized_keys /home/xmd/.ssh/authorized_keys
+echo >> /home/xmd/.ssh/authorized_keys        # end the file with a line break: a key added later starts on its own line
 ```
 
 Keep this root session open until the check passes.
@@ -147,6 +148,8 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/smoke_engine.py
 ```
 
+The first line loads the settings of `.env` into your shell, so that a script you start by hand can see them. It prints nothing, lasts until you log out, and is only needed for scripts run by hand: `deploy/brief.sh` reads `.env` itself. Each part is explained in [Loading `.env` by hand](remote.md#loading-env-by-hand).
+
 **Check:** the first line names `https://api.venice.ai/api/v1` and `qwen3-5-9b`, and lines 1, 2 and 3 all say `OK`. If line 1 says `FAIL  HTTP 401` or `HTTP 402`, it is the key or its spending limit: see [Troubleshooting](remote.md#troubleshooting). If line 2 or 3 says `FAIL`, stop here: see [Limits](remote.md#limits).
 
 ### 2.5 A first brief
@@ -155,7 +158,7 @@ set -a; . ./.env; set +a
 bash deploy/brief.sh 24h
 ```
 
-It prints the five steps of `make_brief.py` and takes several minutes.
+It prints the five steps of `make_brief.py` and takes several minutes. The fetch is the long step: the X backend limits how fast accounts can be read, so it says where it is every 30 seconds (`fetching sources: 40/212, ~3 min left`).
 
 **Check:** the last line starts with `written to digests/` and names a `24h-brief` file.
 
@@ -203,14 +206,19 @@ bash deploy/termux/setup.sh
 
 `setup.sh` installs Python and SSH, asks Android for access to your files (allow it), makes the virtual environment, creates `.env` from the template and creates the five buttons. It is safe to run again.
 
-**Check:** it ends with `done.` and lists five names starting with `brief-`.
+**Check:** it lists five names starting with `brief-` and then says `done.`; under "access to the phone's files" it says `ok: briefs go to Documents/xmd-briefs`. If Android showed no question, access had been given before: the script then says `already allowed`.
+
+To check the install again at any time, run the script again (`cd ~/XtoMD && bash deploy/termux/setup.sh`): it changes nothing that is already in place and stops with a message at the first thing that is missing.
 
 ### 3.3 The key
 
-In Termux:
+In Termux. These are three commands; paste the whole block at once, or one command at a time:
 
 ```bash
+# 1. make the phone's key (one line)
 ssh-keygen -t ed25519 -f ~/.ssh/id_xmd -N ""
+
+# 2. name the VPS for SSH: ONE command of seven lines, everything down to the line EOF is written into ~/.ssh/config
 cat >> ~/.ssh/config <<'EOF'
 Host xmd-vps
     HostName VPS_ADDRESS
@@ -218,16 +226,37 @@ Host xmd-vps
     IdentityFile ~/.ssh/id_xmd
     IdentitiesOnly yes
 EOF
+
+# 3. show the public key (one line)
 cat ~/.ssh/id_xmd.pub
 ```
 
-Replace `VPS_ADDRESS` in `~/.ssh/config` (`nano ~/.ssh/config`). The key has no passphrase, so that a button can use it; the next step is what limits it.
+Command 2 does not run anything on the lines between `cat` and `EOF`: it copies them into the file as they are. After its first line the prompt turns into `>` until `EOF` is entered, alone on its line. Run it once only: each run adds the five lines to the file again.
 
-Get the line `cat` printed over to the laptop: it is a public key, so sending it to yourself is fine. Then, from the laptop, `ssh xmd@VPS_ADDRESS` and add it to the server **with the prefix that restricts it**, all on one line:
+Replace `VPS_ADDRESS` with the server's address, either in the block before you paste it or afterwards in the file (`nano ~/.ssh/config`). The key has no passphrase, so that a button can use it; the next step is what limits it.
+
+**Check:** `cat ~/.ssh/config` shows the five lines once, with the server's address, and command 3 printed one line starting with `ssh-ed25519`.
+
+Get the line `cat` printed over to the laptop: it is a public key, so sending it to yourself is fine. Then, from the laptop, `ssh xmd@VPS_ADDRESS` and add it to the server **with the prefix that restricts it**, all on one line. Do it as `xmd`, not root (`whoami` must answer `xmd`): as root the key would go into root's file and the phone would be refused.
 
 ```bash
-echo 'command="bash /home/xmd/XtoMD/deploy/vps/ssh-entry.sh",restrict PASTE_THE_PHONE_PUBLIC_KEY_LINE_HERE' >> ~/.ssh/authorized_keys
+printf '\n%s\n' 'command="bash /home/xmd/XtoMD/deploy/vps/ssh-entry.sh",restrict PASTE_THE_PHONE_PUBLIC_KEY_LINE_HERE' >> ~/.ssh/authorized_keys
 ```
+
+The `\n` in front starts a new line even when the file does not end with one. The file a provider writes often does not, and the phone's key then ends up glued to the end of the laptop's line, where the server ignores it.
+
+**Check** that the server holds the key the phone has, by comparing fingerprints:
+
+```bash
+ssh-keygen -lf ~/.ssh/authorized_keys        # on the VPS, as xmd: two lines, the laptop's key and the phone's
+ssh-keygen -lf ~/.ssh/id_xmd.pub             # in Termux: one line
+```
+
+Each line reads `256 SHA256:... name (ED25519)`. The `SHA256:...` value is the key's fingerprint, a short code computed from the key, not the key's own text. The one Termux prints must be one of the two the VPS lists.
+
+- **The VPS lists one line only, and `command="bash ...` appears in the middle of it:** the phone's key is glued to the laptop's line. This puts the line break back: `sed -i 's|\(.\)command="bash /home/xmd|\1\ncommand="bash /home/xmd|' ~/.ssh/authorized_keys`
+- **Two lines, but no fingerprint matches:** the key changed on its way from the phone (a line break, a missing character). Remove its line (`nano ~/.ssh/authorized_keys`, Ctrl+K deletes a line) and add it again.
+- **The phone's line is not there at all:** it was added somewhere else, in a root session or on the laptop. Add it here, as `xmd`.
 
 **Check**, in Termux (answer `yes` to the host-key question the first time):
 
@@ -273,6 +302,8 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/smoke_engine.py
 ```
 
+(The second line loads `.env` into the shell, as in step 2.4.)
+
 **Check:** three `OK` lines, then tap `brief-phone-24h`: it ends with `written to ...` and `copied ... to .../xmd-briefs`.
 
 The phone has its own database, so prefer the `24h` buttons here: `since` would mean "since the phone's last digest", not the VPS's.
@@ -288,9 +319,9 @@ termux-job-scheduler --job-id 1 --script ~/.shortcuts/brief-phone-24h --period-m
 
 ## Done: what a day looks like
 
-- At 17:07 the VPS makes the brief by itself.
+- At 18:00 the VPS makes the brief by itself.
 - When you want to read: tap `brief-vps-latest`, then open the file from `Documents/xmd-briefs` (or move it into the vault).
-- When you want one now, or shorter: `brief-vps-24h` or `brief-vps-10min`.
+- When you want one now, or shorter: `brief-vps-24h` or `brief-vps-10min`. It takes several minutes. If the phone loses the connection meanwhile, the VPS finishes the brief anyway: tap `brief-vps-latest` a little later.
 - If the VPS is down: `brief-phone-24h`, once part 4 is done.
 - At home, the laptop works as before. Its briefs and the VPS's are independent.
 

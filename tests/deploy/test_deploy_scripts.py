@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-if sys.platform == "win32" or not all(shutil.which(tool) for tool in ("bash", "flock", "tar")):
+if sys.platform == "win32" or not all(shutil.which(tool) for tool in ("bash", "flock", "setsid", "tar")):
     pytest.skip("the deploy scripts run on Linux and Android", allow_module_level=True)
 
 import fcntl  # noqa: E402  (not on Windows)
@@ -184,6 +184,34 @@ def test_the_phone_may_ask_for_a_brief(vps, request_, passed_on):
     assert _asked(vps) == [passed_on]
 
 
+def test_what_the_brief_prints_and_how_it_ends_reach_the_phone_and_nothing_is_left_behind(vps):
+    (vps / "deploy" / "brief.sh").write_text("echo made; echo 'already being made' >&2; exit 75\n", encoding="utf-8")
+
+    done = _ssh(vps, "run 24h")
+
+    assert done.returncode == 75
+    assert done.stdout.splitlines() == [b"made", b"already being made"]  # one stream: the order a terminal shows
+    assert [p.name for p in (vps / "digests").iterdir()] == []  # the file the output went through is gone
+
+
+def test_a_brief_asked_for_from_the_phone_is_finished_even_if_the_phone_goes_away(vps):
+    (vps / "deploy" / "brief.sh").write_text(
+        'echo started\nsleep 1\nprintf "%s\\n" "$*" >> "$(dirname "$0")/../asked.log"\n', encoding="utf-8")
+    env = {"PATH": os.environ["PATH"], "HOME": str(vps.parent), "SSH_ORIGINAL_COMMAND": "run 24h 10"}
+    session = subprocess.Popen(["bash", str(vps / "deploy" / "vps" / "ssh-entry.sh")], env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    assert session.stdout.readline() == b"started\n"
+    session.stdout.close()  # the connection is lost ...
+    session.kill()  # ... and sshd takes what it started down with it
+    session.wait()
+    assert _asked(vps) == []  # the brief was still in the middle
+
+    deadline = time.time() + 10
+    while not _asked(vps) and time.time() < deadline:
+        time.sleep(0.1)
+    assert _asked(vps) == ["24h 10"]
+
+
 @pytest.mark.parametrize("request_", [
     "", "ls", "bash", "bash -c id", "scp -t /", "rsync --server --sender . /", "cat sources.yaml",
     "run", "run 48h", "run 24h ten", "run 24h 10 more", "run 24h --time", "run 24h 1e3", "run 24h 1000",
@@ -228,8 +256,13 @@ def test_pull_with_nothing_recent_is_an_empty_archive_not_an_error(vps):
 
 # `ssh HOST REQUEST...`: sshd's forced command, without the network
 SSH = """#!/usr/bin/env bash
+while [[ "$1" == -o ]]; do
+    echo "$2" >> "$VPS/options.log"
+    shift 2
+done
 echo "$1" >> "$VPS/hosts.log"
 shift
+if [[ -n "${SSH_FAILS:-}" ]]; then exit 255; fi
 SSH_ORIGINAL_COMMAND="$*" exec bash "$VPS/deploy/vps/ssh-entry.sh"
 """
 
@@ -253,6 +286,18 @@ def test_from_the_phone_a_brief_is_made_on_the_vps_and_lands_in_the_phones_folde
     assert _calls(repo) == ["scripts/make_brief.py --24h --wait 0 --time 10"]
     assert (dest / "2026-10-06-5pm-24h-brief.md").read_text(encoding="utf-8") == "the brief\n"
     assert set((repo / "hosts.log").read_text(encoding="utf-8").split()) == {"my-vps"}
+
+
+def test_a_run_keeps_its_connection_alive_and_a_lost_one_is_explained_not_followed_by_a_download(repo, tmp_path):
+    dest = tmp_path / "briefs"
+
+    done = _phone(repo, tmp_path, "run", "24h", XMD_BRIEF_DEST=str(dest), SSH_FAILS="1")
+
+    assert done.returncode == 255
+    assert b"finished there all" in done.stderr and b"brief-vps-latest" in done.stderr
+    assert (repo / "options.log").read_text(encoding="utf-8").split() == ["ServerAliveInterval=30", "ServerAliveCountMax=4"]
+    assert (repo / "hosts.log").read_text(encoding="utf-8").split() == ["xmd-vps"]  # one call: no download tried
+    assert not dest.exists()
 
 
 def test_a_download_leaves_a_brief_already_on_the_phone_as_it_is(repo, tmp_path):

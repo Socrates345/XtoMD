@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from xmd.cli import (
-    PROGRESS_BAR_WIDTH, SINCE_RUN_MAX_HOURS, _companions, _digest, _fetch_to_store, _render_progress,
+    PROGRESS_BAR_WIDTH, SINCE_RUN_MAX_HOURS, _companions, _digest, _fetch_to_store, _line_progress,
+    _render_progress,
     _report_failures,
 )
 from xmd.core.config import Config, Source
@@ -66,6 +67,25 @@ def test_render_progress_ignores_zero_total(capsys):
 def test_render_progress_shows_an_eta_once_a_source_has_answered(capsys):
     _render_progress(5, 10, started=time.perf_counter() - 10)
     assert "s left" in capsys.readouterr().out  # 10s for 5/10 -> ~10s left for the other 5
+
+
+def test_without_a_terminal_progress_is_a_line_at_the_first_source_and_at_the_last_not_one_per_source(capsys):
+    show = _line_progress(time.perf_counter())
+    for done in range(1, 11):
+        show(done, 10)
+    assert capsys.readouterr().out.splitlines() == ["fetching sources: 1/10", "fetching sources: 10/10"]
+
+
+def test_without_a_terminal_a_long_fetch_says_where_it_is_and_how_long_is_left(capsys, monkeypatch):
+    monkeypatch.setattr("xmd.cli.PROGRESS_LINE_SECONDS", 0)
+    show = _line_progress(time.perf_counter() - 100)  # 100 s in
+    show(1, 10)
+    show(5, 10)  # 5 sources in 100 s: 5 more take as long
+    show(9, 10)
+    first, half, late = capsys.readouterr().out.splitlines()
+    assert first == "fetching sources: 1/10"
+    assert half.startswith("fetching sources: 5/10, ~2 min left")
+    assert late.startswith("fetching sources: 9/10, ~11 s left")
 
 
 def test_render_progress_shows_no_eta_before_anything_finishes(capsys):
@@ -475,3 +495,20 @@ def test_main_names_only_the_export_when_neither_digest_is_asked_for(tmp_path, m
     cli_module.main(["digest", "--window", "24h"])
     out = capsys.readouterr().out.splitlines()
     assert len(out) == 1 and out[0].startswith("export: ")
+
+
+def test_a_fetch_whose_output_is_not_a_terminal_still_says_where_it_is(tmp_path, monkeypatch, capsys):
+    from xmd import cli as cli_module
+
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+        progress(1, 2)
+        progress(2, 2)
+        return FetchResult(items=[])
+
+    monkeypatch.setattr(cli_module, "load_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
+
+    cli_module.main(["fetch"])  # captured output: not a terminal, as over SSH from the phone or in a journal
+    assert capsys.readouterr().out.splitlines() == [
+        "fetching sources: 1/2", "fetching sources: 2/2", "fetched: 0 new item(s)",
+    ]

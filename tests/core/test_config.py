@@ -173,6 +173,17 @@ def test_an_empty_config_or_an_empty_section_is_still_fine(tmp_path, monkeypatch
         assert load_config(_setup(tmp_path, yaml_text=yaml_text)).x_api_key == "env-secret"
 
 
+def test_a_path_setting_left_empty_means_its_default(tmp_path):
+    cfg = load_config(_setup(tmp_path, yaml_text=X_KEY_YAML + "storage:\ndigest_dir: ''\nsources_dir:  # sources\n"))
+    assert (str(cfg.storage), str(cfg.digest_dir)) == ("xmd.db", "digests")
+    assert cfg.sources[0].handle == "dave"  # read from the default sources/
+
+
+def test_a_path_setting_that_is_not_text_is_a_config_error(tmp_path):
+    with pytest.raises(ValueError, match="`storage:` must be a path, not a list"):
+        load_config(_setup(tmp_path, yaml_text=X_KEY_YAML + "storage:\n  - xmd.db\n"))
+
+
 def test_no_sources_gives_actionable_error(tmp_path):
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "x.md").write_text("", encoding="utf-8")

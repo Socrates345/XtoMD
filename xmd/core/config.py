@@ -180,6 +180,17 @@ def _section(raw: dict, name: str, path: Path) -> dict:
     return value
 
 
+def _path_setting(raw: dict, name: str, default: str, path: Path) -> Path:
+    """A top-level path (`storage:`, `digest_dir:`, `sources_dir:`). Missing, or left with nothing after the colon,
+    means the default; anything but text is a mistake to name rather than a TypeError to trace."""
+    value = raw.get(name)
+    if value is None or value == "":
+        return Path(default)
+    if not isinstance(value, str):
+        raise ValueError(f"{path}: `{name}:` must be a path, not a {type(value).__name__}")
+    return Path(value)
+
+
 def _language_code(value: object, path: Path) -> str:
     text = str(value).strip().lower()
     if text in LANGUAGE_NAMES:
@@ -253,7 +264,7 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         key_field = "tweetapi_api_key" if x_backend == "tweetapi" else "api_key"
         raise ValueError(f"x.{key_field} (or {env_var}) is not set")
 
-    sources_dir = path.parent / raw.get("sources_dir", "sources")
+    sources_dir = path.parent / _path_setting(raw, "sources_dir", "sources", path)
     x_md = sources_dir / "x.md"
     if not x_md.exists():
         raise ValueError(f"no sources found — add handles to {x_md}")
@@ -308,8 +319,8 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         x_api_key=x_api_key,
         tweetapi_api_key=tweetapi_api_key,
         tweetapi_rate_limit_per_minute=tweetapi_rate_limit_per_minute,
-        storage=Path(raw.get("storage", "xmd.db")),
-        digest_dir=Path(raw.get("digest_dir", "digests")),
+        storage=_path_setting(raw, "storage", "xmd.db", path),
+        digest_dir=_path_setting(raw, "digest_dir", "digests", path),
         tz=tz,
         language=_language(raw, path),
     )

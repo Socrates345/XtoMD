@@ -11,6 +11,8 @@
 #
 # Anything else is refused, so a lost phone can start a brief and read briefs, and that is all. The request is
 # never handed to a shell: it is split into words and each word is checked.
+#
+# A brief asked for here is finished even if the phone goes away in the middle: see `run` below.
 set -euo pipefail
 
 refuse() {
@@ -29,7 +31,21 @@ case "${words[0]:-}" in
         [[ ${#words[@]} -ge 2 && ${#words[@]} -le 3 ]] || refuse
         [[ "${words[1]}" == 24h || "${words[1]}" == since ]] || refuse
         [[ ${#words[@]} -eq 2 || "${words[2]}" =~ ^[0-9]{1,3}$ ]] || refuse
-        exec bash "$repo/deploy/brief.sh" "${words[@]:1}"
+        # The brief must outlive this connection: in the minutes it takes, a phone changes network or goes to
+        # sleep. So it runs in a session of its own and writes to a file, and this side only shows that file as
+        # it grows. A phone that goes away ends the showing, not the brief: `pull` finds it once it is made.
+        digests="$(digests_dir)"
+        cd "$repo"
+        mkdir -p "$digests"
+        find "$digests" -maxdepth 1 -type f -name '.brief-log.*' -mmin +180 -delete  # left by lost connections
+        log="$(mktemp "$digests/.brief-log.XXXXXX")"
+        setsid bash "$repo/deploy/brief.sh" "${words[@]:1}" > "$log" 2>&1 < /dev/null &
+        job=$!
+        tail --pid="$job" -n +1 -f "$log" 2> /dev/null || true  # ends with the brief, or with the connection
+        code=0
+        wait "$job" || code=$?
+        rm -f "$log"
+        exit "$code"
         ;;
     pull)
         [[ ${#words[@]} -le 2 ]] || refuse

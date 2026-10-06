@@ -23,8 +23,15 @@ dest="${XMD_BRIEF_DEST:-$HOME/storage/shared/Documents/xmd-briefs}"
 code=0
 case "${1:-}" in
     run)
+        # ServerAlive*: a quiet stretch of the run must not let a mobile network forget the connection, and one
+        # that did die is noticed within two minutes, not never
+        ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$host" "$@" || code=$?
+        if [[ "$code" -eq 255 ]]; then  # ssh's own failure, not the brief's
+            echo "the connection to the VPS failed or was lost. A brief that had started is finished there all" >&2
+            echo "the same: get it in a few minutes with brief-vps-latest (bash deploy/termux/vps.sh pull)" >&2
+            exit 255
+        fi
         # a brief with failed chunks is still written (exit 1): download whatever there is either way
-        ssh "$host" "$@" || code=$?
         pull=(pull 1)
         ;;
     pull)

@@ -44,6 +44,30 @@ def _render_progress(done: int, total: int, started: float | None = None) -> Non
     sys.stdout.flush()
 
 
+PROGRESS_LINE_SECONDS = 30  # between two progress lines, where the bar cannot be redrawn in place
+
+
+def _line_progress(started: float) -> Callable[[int, int], None]:
+    """Progress where the output is not a terminal (the phone over SSH, the VPS's journal, a log file): the
+    in-place bar shows nothing there until the fetch ends, minutes later, which looks like a hang. So say where
+    the fetch is in a line of its own: at the first source, every PROGRESS_LINE_SECONDS, and at the last."""
+    last: float | None = None
+
+    def show(done: int, total: int) -> None:
+        nonlocal last
+        now = time.perf_counter()
+        if total <= 0 or (done < total and last is not None and now - last < PROGRESS_LINE_SECONDS):
+            return
+        eta = ""
+        if last is not None and 0 < done < total:  # not on the first line: one source says little about the rest
+            remaining = (now - started) / done * (total - done)
+            eta = f", ~{remaining / 60:.0f} min left" if remaining >= 90 else f", ~{remaining:.0f} s left"
+        last = now
+        print(f"fetching sources: {done}/{total}{eta}", flush=True)
+
+    return show
+
+
 def _report_failures(failed: list[tuple[Source, str]]) -> None:
     """Name every source that could not be fetched, and why, after the pass:
     the usual cause is an account that changed its @, which only the user can
@@ -261,9 +285,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "fetch":
         def progress_for_this_pass():  # a fresh start time each pass, so --loop's ETA isn't cumulative
-            if not sys.stdout.isatty():
-                return None
             started = time.perf_counter()
+            if not sys.stdout.isatty():  # a pipe, a journal, the phone over SSH: the bar needs a terminal
+                return _line_progress(started)
             return lambda done, total: _render_progress(done, total, started)
 
         if args.loop:

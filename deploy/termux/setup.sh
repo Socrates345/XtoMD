@@ -18,7 +18,9 @@ echo "== packages"
 pkg install -y python openssh util-linux tar
 
 echo "== access to the phone's files (where the briefs go)"
-if [[ ! -d "$HOME/storage/shared" ]]; then
+if [[ -d "$HOME/storage/shared" ]]; then
+    echo "already allowed: Android does not ask again"
+else
     echo "Android asks whether Termux may reach your files: allow it."
     termux-setup-storage
     for _ in $(seq 60); do
@@ -26,10 +28,15 @@ if [[ ! -d "$HOME/storage/shared" ]]; then
         sleep 1
     done
 fi
-if [[ ! -d "$HOME/storage/shared" ]]; then
-    echo "no access yet: allow it (Settings > Apps > Termux > Permissions), then run this script again" >&2
+# the folder the briefs go to unless .env names another (phone.sh, vps.sh): making it proves the access is real
+briefs="$HOME/storage/shared/Documents/xmd-briefs"
+if ! mkdir -p "$briefs" 2> /dev/null || ! touch "$briefs/.write-test" 2> /dev/null; then
+    echo "Termux cannot write to the phone's files yet: allow it (Settings > Apps > Termux > Permissions)," >&2
+    echo "then run this script again" >&2
     exit 1
 fi
+rm -f "$briefs/.write-test"
+echo "ok: briefs go to Documents/xmd-briefs"
 
 echo "== python environment"
 cd "$repo"
@@ -66,4 +73,5 @@ if [[ ! -f .env ]]; then
     echo "  set -a; . ./.env; set +a; .venv/bin/python scripts/smoke_engine.py"
 fi
 echo
-echo "done. Add the Termux:Widget widget to the home screen to get the buttons."
+echo "done."
+echo "Add the Termux:Widget widget to the home screen to get the buttons."
