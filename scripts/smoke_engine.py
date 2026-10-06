@@ -52,12 +52,21 @@ SCHEMA = {
                     "ids": {"type": "array", "items": {"type": "integer"}},
                 },
                 "required": ["headline", "detail", "ids"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["items"],
+    "additionalProperties": False,
 }
 SYSTEM = "You condense numbered social-media posts into a short brief. Reply with JSON only."
+
+
+def _bounded(most: int) -> dict:
+    """SCHEMA with the item count limited in the schema itself, as a real chunk's is (xmd.summary.prompt): a server
+    that refuses those keywords, or ignores them, should say so here and not in the middle of a brief."""
+    items = {**SCHEMA["properties"]["items"], "minItems": 1, "maxItems": most}
+    return {**SCHEMA, "properties": {"items": items}}
 
 # calls per export: what xmd/summary/chunk.py makes of the frozen 24h export (10; tiers are never mixed),
 # and roughly three times the posts for three days (~27, the per-tier remainders don't triple)
@@ -108,7 +117,7 @@ class Reply(NamedTuple):
 
 def _chat(
     client: httpx.Client, base: str, model: str, user: str, schema: dict | None, max_tokens: int,
-    no_think: bool = False,
+    no_think: bool = False, extra: dict | None = None,
 ) -> Reply:
     body = {
         "model": model,
@@ -123,6 +132,7 @@ def _chat(
         }
     if no_think:  # Qwen's documented switch; Qwen3.5 has no /no_think soft switch
         body["chat_template_kwargs"] = {"enable_thinking": False}
+    body.update(extra or {})  # --extra-body: what one provider wants and no other
     start = time.perf_counter()
     resp = client.post(f"{base}/chat/completions", json=body)
     seconds = time.perf_counter() - start
@@ -185,8 +195,8 @@ def _choose(wanted: str, models: list[str] | None) -> str | None:
     return wanted
 
 
-def _brief_problem(text: str, posts: int) -> str | None:
-    """None if `text` is a brief in the agreed shape, else what is wrong with it."""
+def _brief_problem(text: str, posts: int, most: int) -> str | None:
+    """None if `text` is a brief in the agreed shape and of at most `most` items, else what is wrong with it."""
     try:
         items = json.loads(text)["items"]
         bad = 0
@@ -200,6 +210,8 @@ def _brief_problem(text: str, posts: int) -> str | None:
         return "valid JSON but no items"
     if bad:
         return f"{bad} cited id(s) outside 1..{posts}"
+    if len(items) > most:
+        return f"{len(items)} items where the schema allows {most}: the server does not enforce maxItems"
     return None
 
 
@@ -213,12 +225,26 @@ THINKING_HINT = """\
 thinking is probably on: the model spends its tokens reasoning before it answers.
   LM Studio: untick Thinking in the model's settings, then reload the model.
   --no-think sends chat_template_kwargs {"enable_thinking": false}, Qwen's own documented
-  switch, if your server honours it."""
+  switch, if your server honours it.
+  A hosted model takes its provider's own switch in --extra-body (docs/remote.md has Venice's)."""
 
 
-def _problem(reply: Reply, posts: int) -> str | None:
+def _problem(reply: Reply, posts: int, most: int) -> str | None:
     """What is wrong with a structured reply, or None."""
-    return _empty_note(reply) if not reply.text.strip() else _brief_problem(reply.text, posts)
+    return _empty_note(reply) if not reply.text.strip() else _brief_problem(reply.text, posts, most)
+
+
+def _extra_body(text: str) -> dict:
+    """--extra-body's argument: a JSON object, or nothing (as xmd.summary.engine.parse_extra_body)."""
+    if not text.strip():
+        return {}
+    try:
+        fields = json.loads(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not JSON ({exc})") from None
+    if not isinstance(fields, dict):
+        raise argparse.ArgumentTypeError(f"expected a JSON object, got {type(fields).__name__}")
+    return fields
 
 
 def _vram() -> str:
@@ -238,13 +264,18 @@ def _vram() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Smoke-test an OpenAI-compatible model endpoint.")
-    ap.add_argument("--model", default="", help="model id, or part of one (case-insensitive); "
-                    "omit it when the server offers just one")
+    # (this script stands alone, so it names the variables itself: xmd.summary.engine's *_ENV_VAR)
+    ap.add_argument("--model", default=os.environ.get("XMD_LLM_MODEL", ""),
+                    help="model id, or part of one (case-insensitive); omit it when the server offers just one "
+                         "(default: $XMD_LLM_MODEL)")
     ap.add_argument("--list", action="store_true", help="print the models the server offers and exit")
-    ap.add_argument("--base-url", default="http://127.0.0.1:1234/v1", help="default: LM Studio")
-    # (this script stands alone, so it names the variable itself: xmd.summary.engine.API_KEY_ENV_VAR)
+    ap.add_argument("--base-url", default=os.environ.get("XMD_LLM_BASE_URL") or "http://127.0.0.1:1234/v1",
+                    help="default: $XMD_LLM_BASE_URL, else LM Studio")
     ap.add_argument("--api-key", default=os.environ.get("XMD_LLM_API_KEY", ""),
                     help="only if the runtime wants one (default: $XMD_LLM_API_KEY; a key typed here stays in your shell history)")
+    ap.add_argument("--extra-body", type=_extra_body, default=os.environ.get("XMD_LLM_EXTRA_BODY", ""), metavar="JSON",
+                    help="a JSON object of fields added to every request, for what one provider wants and no other "
+                         "(default: $XMD_LLM_EXTRA_BODY; docs/remote.md has Venice's)")
     ap.add_argument("--chunk-posts", type=int, default=150, help="posts in the full-chunk test (~5K tokens)")
     ap.add_argument("--timeout", type=float, default=600, help="seconds per call")
     ap.add_argument("--no-think", action="store_true",
@@ -271,8 +302,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"engine  {base}   model {model}")
         if args.no_think:
             print("thinking: off requested (chat_template_kwargs)")
+        if args.extra_body:
+            print(f"extra body: {', '.join(args.extra_body)}")
         print(f"VRAM before: {_vram()}\n")
-        ask = {"no_think": args.no_think}
+        ask = {"no_think": args.no_think, "extra": args.extra_body}
         replies: list[Reply] = []
         gen_rate = 0.0  # tokens/s, from check 2 (short prompt, so close to pure generation)
 
@@ -293,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # 2. a short structured reply: schema honoured, plus generation speed
         try:
-            reply = _chat(client, base, model, _prompt(12, 5), SCHEMA, 700, **ask)
+            reply = _chat(client, base, model, _prompt(12, 5), _bounded(5), 700, **ask)
         except httpx.HTTPError as exc:
             print(f"2. json schema  FAIL  {_why(exc)}")
             failed = True
@@ -301,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
             replies.append(reply)
             out = reply.usage.get("completion_tokens") or len(reply.text) // 4
             gen_rate = out / reply.seconds
-            problem = _problem(reply, 12)
+            problem = _problem(reply, 12, 5)
             print(f"2. json schema  {'OK  ' if not problem else 'FAIL'}  "
                   f"{out} tokens out in {reply.seconds:.1f} s = {out / reply.seconds:.1f} tok/s"
                   + (f"   {problem}" if problem else ""))
@@ -311,14 +344,14 @@ def main(argv: list[str] | None = None) -> int:
         # a nonce first, so a prompt cached by an earlier run can't make this look faster than a fresh chunk
         user = f"Batch {uuid.uuid4().hex[:8]}\n\n" + _prompt(args.chunk_posts, 20)
         try:
-            reply = _chat(client, base, model, user, SCHEMA, 1500, **ask)
+            reply = _chat(client, base, model, user, _bounded(20), 1500, **ask)
         except httpx.HTTPError as exc:
             print(f"3. full chunk   FAIL  {_why(exc)}")
             failed = True
         else:
             replies.append(reply)
             tokens_in, tokens_out = reply.usage.get("prompt_tokens"), reply.usage.get("completion_tokens")
-            problem = _problem(reply, args.chunk_posts)
+            problem = _problem(reply, args.chunk_posts, 20)
             if tokens_in and tokens_in < 0.7 * len(user) / 4:
                 # servers with a small default context cut the prompt without an error
                 problem = (f"context too small: sent ~{len(user) // 4} tokens, server counted {tokens_in}, "

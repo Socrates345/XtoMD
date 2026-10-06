@@ -16,11 +16,16 @@ because a digest moves the since-run cursor: none is made for a brief that could
 
 If it stops after the digest (LM Studio went away), the export is kept: run `run_system.py` and then
 `assemble_brief.py` to finish, as the message says. Run it from the repo root, like the other scripts.
+
+Away from the laptop the model is a hosted one (docs/remote.md): `--base-url`, `--model` and `--extra-body`, or
+`XMD_LLM_BASE_URL`, `XMD_LLM_MODEL` and `XMD_LLM_EXTRA_BODY` in the environment, name it. A server that is not on
+this machine is not waited for: it answers or the run stops, before anything is fetched.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -33,7 +38,8 @@ import run_system  # noqa: E402
 from xmd import cli  # noqa: E402
 from xmd.core.config import load_config  # noqa: E402
 from xmd.summary.engine import (  # noqa: E402
-    API_KEY_ENV_VAR, DEFAULT_BASE_URL, Engine, EngineError, ModelChoiceError, choose_model, list_models,
+    API_KEY_ENV_VAR, BASE_URL_ENV_VAR, DEFAULT_BASE_URL, EXTRA_BODY_ENV_VAR, MODEL_ENV_VAR, Engine, EngineError,
+    ModelChoiceError, choose_model, list_models, on_this_machine,
 )
 
 DEFAULT_MODEL = "qwen/qwen3.5-9b"  # the setup the README describes and tests
@@ -44,11 +50,14 @@ WINDOW_WORDS = {"since-run": "only what is new since your last digest", "24h": "
 
 def wait_for_server(base_url: str, api_key: str, wait: float) -> list[str] | None:
     """The server's model listing (None: it answers but lists none). While it is down: say what to open, then
-    look every few seconds. EngineError if it has not answered after `wait` seconds (0: do not wait, just say so)."""
+    look every few seconds. EngineError if it has not answered after `wait` seconds (0: do not wait, just say so),
+    or at once when the server is not on this machine: there is nothing to open, and a run nobody watches (a
+    timer, a phone) should not sit there."""
     try:
         return list_models(base_url, api_key)
     except EngineError:
-        pass
+        if not on_this_machine(base_url):
+            raise
     print(f"LM Studio's server is not answering at {base_url}.\n"
           f"  -> Open LM Studio and start its server (Developer tab, port 1234).\n"
           f"     Model: {DEFAULT_MODEL}, context length 8192 or more, thinking off (README, LM Studio setup).")
@@ -74,7 +83,8 @@ def _runs(runs_dir: Path) -> set[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Fetch, digest, summarize with LM Studio and assemble the brief.")
-    ap.add_argument("--model", default="", help=f"model id, or part of one (default: {DEFAULT_MODEL})")
+    ap.add_argument("--model", default=os.environ.get(MODEL_ENV_VAR, ""),
+                    help=f"model id, or part of one (default: ${MODEL_ENV_VAR}, else {DEFAULT_MODEL})")
     ap.add_argument("--time", type=run_system.time_budget, default=None, metavar="MIN",
                     help="the reading time to fit the brief to, in minutes (10, 30...); without it the brief is as "
                          "long as the day was")
@@ -88,9 +98,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--quick", action="store_true", help="also write the quick digest, as `xmd digest --quick`")
     ap.add_argument("--wait", type=float, default=900, metavar="SECONDS",
                     help="how long to wait for LM Studio's server to come up (default 900; 0: do not wait)")
-    ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help="default: LM Studio")
+    ap.add_argument("--base-url", default=os.environ.get(BASE_URL_ENV_VAR) or DEFAULT_BASE_URL,
+                    help=f"default: ${BASE_URL_ENV_VAR}, else LM Studio")
     ap.add_argument("--api-key", default=os.environ.get(API_KEY_ENV_VAR, ""),
                     help=f"only if the runtime wants one (default: ${API_KEY_ENV_VAR}; a key typed here stays in your shell history)")
+    ap.add_argument("--extra-body", type=run_system.extra_body, default=os.environ.get(EXTRA_BODY_ENV_VAR, ""),
+                    metavar="JSON", help=f"a JSON object of fields added to every request, for what one provider "
+                                         f"wants and no other (default: ${EXTRA_BODY_ENV_VAR}; docs/remote.md has Venice's)")
     ap.add_argument("--config", default="sources.yaml", help="path to sources.yaml")
     args = ap.parse_args(argv)
 
@@ -100,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.exit(f"config error: {exc}")
     digests = config.digest_dir
 
-    print("[1/5] LM Studio")
+    local = on_this_machine(args.base_url)
+    print("[1/5] LM Studio" if local else "[1/5] model server")
     wanted = args.model or DEFAULT_MODEL
     try:
         models = wait_for_server(args.base_url, args.api_key, args.wait)
@@ -112,16 +127,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{exc}")
         return 2
     if note:  # nothing on the server fits: stop now, not after the digest has used up its window
-        print(f"\nno model on the server fits {wanted!r}: download it in LM Studio, or name another with --model. On offer:")
+        print(f"\nno model on the server fits {wanted!r}: {'download it in LM Studio, or ' if local else ''}"
+              "name another with --model. On offer:")
         print("\n".join(f"  {m}" for m in models or []))
         return 2
     print(f"model {model}: checking that it answers ...")
     try:  # loads the model now, and a model that thinks fails here, before anything is fetched
-        with Engine(model, args.base_url, args.api_key, WARMUP_TIMEOUT) as engine:
+        with Engine(model, args.base_url, args.api_key, WARMUP_TIMEOUT, extra_body=args.extra_body) as engine:
             warm = engine.complete("Reply with one word.", "ok", max_tokens=16)
     except EngineError as exc:
         print(f"the model did not answer, nothing was fetched: {exc}\n"
-              "Thinking must be off and the context length 8192 or more (README, LM Studio setup).")
+              + ("Thinking must be off and the context length 8192 or more (README, LM Studio setup)." if local else
+                 "Thinking must be off: a hosted model takes its own switch for that in --extra-body (docs/remote.md)."))
         return 1
     print(f"ok in {warm.seconds:.1f} s\n")
 
@@ -143,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         "--export", str(export), "--digests-dir", str(digests), "--model", model, "--base-url", args.base_url,
         "--config", args.config,
         *(["--api-key", args.api_key] if args.api_key else []),
+        *(["--extra-body", json.dumps(args.extra_body)] if args.extra_body else []),
         *(["--time", f"{args.time:g}"] if args.time is not None else []),
     ])
     new = sorted(_runs(digests / ".runs") - before)

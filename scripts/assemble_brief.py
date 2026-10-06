@@ -71,7 +71,7 @@ def _unused(path: Path) -> Path:
 def _engine(args: argparse.Namespace, run_engine: dict, timeout: float = 120) -> Engine:
     """The model for the calls made here: the run's own, unless --model / --base-url say otherwise."""
     return Engine(args.model or run_engine["model"], args.base_url or run_engine["base_url"], args.api_key, timeout,
-                  run_engine.get("no_think", False))
+                  run_engine.get("no_think", False), run_engine.get("extra_body"))
 
 
 def main(argv: list[str] | None = None) -> int:

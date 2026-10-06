@@ -1,7 +1,8 @@
 import pytest
 
 from xmd.summary.chunk import BAND
-from xmd.summary.prompt import BRIEF_SCHEMA, DEFAULT_PROMPT, bounded_schema, load_prompt
+from xmd.summary.prompt import BRIEF_SCHEMA, DEFAULT_PROMPT, SECTION_SCHEMA, bounded_schema, load_prompt
+from xmd.summary.translate import DETECT_SCHEMA, TRANSLATE_SCHEMA
 
 TINY = """---
 name: t
@@ -55,6 +56,27 @@ def test_the_bounded_schema_limits_the_items_and_leaves_the_original_alone():
     assert schema["properties"]["items"]["minItems"] == 7 and schema["properties"]["items"]["maxItems"] == 28
     assert "minItems" not in BRIEF_SCHEMA["properties"]["items"]
     assert schema["properties"]["items"]["items"] == BRIEF_SCHEMA["properties"]["items"]["items"]
+
+
+def _objects(schema: dict):
+    """Every object in a schema, the one inside an array included."""
+    if schema.get("type") == "object":
+        yield schema
+        for child in schema["properties"].values():
+            yield from _objects(child)
+    elif schema.get("type") == "array":
+        yield from _objects(schema["items"])
+
+
+@pytest.mark.parametrize("schema", [
+    SECTION_SCHEMA, BRIEF_SCHEMA, bounded_schema(1, 5), DETECT_SCHEMA, TRANSLATE_SCHEMA,
+], ids=["section", "brief", "bounded brief", "detect", "translate"])
+def test_every_object_in_a_schema_takes_all_its_keys_and_no_other_as_a_hosted_strict_mode_demands(schema):
+    found = list(_objects(schema))
+    assert found
+    for obj in found:
+        assert obj["additionalProperties"] is False
+        assert sorted(obj["required"]) == sorted(obj["properties"])
 
 
 def test_the_output_example_shows_several_items_because_a_weak_model_copies_its_example():

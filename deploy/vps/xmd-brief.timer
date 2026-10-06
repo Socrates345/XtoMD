@@ -1,0 +1,13 @@
+# When the daily brief is made on the VPS (docs/remote.md). See xmd-brief.service for the install.
+
+[Unit]
+Description=XtoMD daily brief, once a day
+
+[Timer]
+# The hour, on the clock named at the end of the line: change it here, then `systemctl daemon-reload`.
+OnCalendar=*-*-* 17:07:00 Europe/Paris
+# A run missed while the server was off is made when it comes back.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

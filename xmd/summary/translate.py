@@ -36,15 +36,18 @@ DETECT_SCHEMA = {
                 "type": "object",
                 "properties": {"n": {"type": "integer"}, "lang": {"type": "string"}},
                 "required": ["n", "lang"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["posts"],
+    "additionalProperties": False,
 }
 TRANSLATE_SCHEMA = {
     "type": "object",
     "properties": {"translation": {"type": "string"}},
     "required": ["translation"],
+    "additionalProperties": False,
 }
 
 DETECT_BATCH = 25  # texts tagged per call

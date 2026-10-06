@@ -86,6 +86,17 @@ lms server stop
 
 Every run stays in `digests\.runs\`; `assemble_brief.py --run LABEL` assembles any of them again.
 
+### Away from the laptop
+
+No laptop, no LM Studio: a small VPS makes the brief every day on a timer, and the phone (Termux on Android) asks it for another one or downloads what it made. The phone can also run the whole pipeline alone, as a fallback. Both summarize with a hosted model, Venice's `qwen3-5-9b`, so there the export leaves your machine. **[docs/remote.md](docs/remote.md)** explains how it works (who sees what, settings, commands, troubleshooting); **[docs/remote-setup.md](docs/remote-setup.md)** installs it step by step.
+
+```bash
+bash deploy/brief.sh 24h        # on the VPS or the phone: reads .env, then runs make_brief.py --24h
+bash deploy/brief.sh 24h 10     # ... fitted to a 10-minute read
+```
+
+On those machines `.env` (from `deploy/env.example`) names the model server once: `XMD_LLM_BASE_URL`, `XMD_LLM_MODEL`, `XMD_LLM_API_KEY`, `XMD_LLM_EXTRA_BODY`. The scripts read them from the environment, so nothing changes on the laptop, where they are not set.
+
 ## Commands
 
 Run all commands from the repo root. `--config` and `--version` go before the subcommand: `xmd --config other.yaml fetch`.
@@ -129,7 +140,7 @@ Priority and image tweets never reach a model for a summary; with `language:` se
 
 **Checks.** Nothing the model writes is taken on trust: a cited post number not in the chunk is removed (an item left with no real source is dropped); a number, `@handle` or `$ticker` none of the cited posts contain gets a visible ⚠; a reply that's cut off, not JSON, or far too short is retried once, then falls back to one-liners under "Not summarized".
 
-**Files.** `digests/.runs/<label>/` is one run (`run.json`, one JSON per chunk, `sections.json`); read it with `run_stats.py`, delete old ones whenever. `digests/` is git-ignored. Only the summarizing is local, to a server on your own machine (a `--base-url` anywhere else is warned about) — `xmd fetch` sends your follow list and API key to whichever provider you chose (twitterapi.io or tweetapi.com).
+**Files.** `digests/.runs/<label>/` is one run (`run.json`, one JSON per chunk, `sections.json`); read it with `run_stats.py`, delete old ones whenever. `digests/` is git-ignored. On the laptop the summarizing is local, to a server on your own machine; a `--base-url` anywhere else is warned about, and is what a VPS or a phone uses ([Away from the laptop](#away-from-the-laptop)). `xmd fetch` sends your follow list and API key to whichever provider you chose (twitterapi.io or tweetapi.com).
 
 ### Reading time
 
@@ -195,7 +206,8 @@ A time shorter than the barest brief (summaries at 0.10, trending, a line per pr
 
 Every script also takes `--help` for its full flag list. Flags several scripts share:
 
-- `--base-url URL` (default `http://127.0.0.1:1234/v1`) / `--api-key KEY` (default `$XMD_LLM_API_KEY`): the OpenAI-compatible server. Prefer the env var over typing a key on the command line — it stays out of your shell history.
+- `--base-url URL` (default `$XMD_LLM_BASE_URL`, else `http://127.0.0.1:1234/v1`) / `--api-key KEY` (default `$XMD_LLM_API_KEY`): the OpenAI-compatible server. Prefer the env var over typing a key on the command line — it stays out of your shell history. `--model` defaults to `$XMD_LLM_MODEL` the same way.
+- `--extra-body JSON` (default `$XMD_LLM_EXTRA_BODY`; `make_brief.py`, `run_system.py`, `smoke_engine.py`): a JSON object of fields added to every request as they are, for what one provider wants and no other, such as a hosted model's own switch for thinking ([docs/remote.md](docs/remote.md) has Venice's). The run remembers it, so `assemble_brief.py` sends the same.
 - `--digests-dir DIR` (default `digests`) / `--config PATH` (default `sources.yaml`).
 
 ### `run_headless.py` — recommended for daily use
@@ -254,7 +266,7 @@ Checks a run's summaries and writes `digests/<date>-<hour>-<window>-brief.md`. A
 ### Stats and model evaluation
 
 - **`run_stats.py`** — per-chunk counts for a run: items, cited numbers that are real, coverage, repeats. Numbers only, safe to paste. `--run LABEL`, `--show-unsupported` (also lists items with a figure no cited post contains — prints tweet text, for your eyes only).
-- **`smoke_engine.py`** — checks a model with synthetic posts only: does it answer, does it honour a JSON schema, how long does one full chunk take. `--list` (print the server's models and exit), `--model NAME`. To try another model: `--list`, then `--model NAME`, then `run_system.py --model NAME --dry-run --only regular-01`.
+- **`smoke_engine.py`** — checks a model with synthetic posts only: does it answer, does it honour a JSON schema and the item bounds a real chunk sends, how long does one full chunk take. `--list` (print the server's models and exit), `--model NAME`. To try another model: `--list`, then `--model NAME`, then `run_system.py --model NAME --dry-run --only regular-01`.
 - **`freeze_export.py`** — rebuilds a fixed past window from the database, for reproducible comparisons; not part of the daily workflow. `--from TIME --to TIME` (required, UTC), `--fetched-by TIME`.
 
 ## Troubleshooting
@@ -280,7 +292,8 @@ xmd/        the tool. cli.py: the `xmd` command.
   summary/    the model side: chunk, prompt, engine, runner; verify, topics, sections, brief.
 prompts/    brief.md (chunk prompt), section.md (section-summary prompt)
 scripts/    the seven scripts above
-docs/       digest-summary.md: the brief's changelog, design and next optimization routes
+deploy/     running without the laptop: brief.sh (the entry point), env.example, vps/ (timer, SSH entry), termux/ (phone)
+docs/       digest-summary.md: the brief's changelog, design and next optimization routes. remote.md and remote-setup.md: the VPS and the phone
 tests/      pytest, in the same folders as xmd/ (test_cli.py at the top)
 ```
 

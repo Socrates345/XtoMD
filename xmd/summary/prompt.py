@@ -20,11 +20,15 @@ SECTION_PROMPT = DEFAULT_PROMPT.with_name("section.md")
 DETECT_PROMPT = DEFAULT_PROMPT.with_name("detect.md")
 TRANSLATE_PROMPT = DEFAULT_PROMPT.with_name("translate.md")
 
+# Every object in a schema names all its keys as required and allows no others: a hosted server's strict mode
+# (Venice, OpenAI) refuses a schema that doesn't, and a local one loses nothing by it.
+
 # the reply shape of a section summary (prompts/section.md)
 SECTION_SCHEMA = {
     "type": "object",
     "properties": {"summary": {"type": "string"}},
     "required": ["summary"],
+    "additionalProperties": False,
 }
 
 # the reply shape every engine is asked for (docs/digest-summary.md, "Design")
@@ -41,10 +45,12 @@ BRIEF_SCHEMA = {
                     "ids": {"type": "array", "items": {"type": "integer"}},
                 },
                 "required": ["headline", "detail", "ids"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["items"],
+    "additionalProperties": False,
 }
 
 def bounded_schema(min_items: int, max_items: int) -> dict:

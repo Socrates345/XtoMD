@@ -5,7 +5,9 @@ import httpx
 import pytest
 
 from xmd.summary import engine as engine_module
-from xmd.summary.engine import Engine, EngineError, ModelChoiceError, choose_model, list_models, parse_json
+from xmd.summary.engine import (
+    Engine, EngineError, ModelChoiceError, choose_model, list_models, parse_extra_body, parse_json,
+)
 
 SCHEMA = {"type": "object", "properties": {"items": {"type": "array"}}, "required": ["items"]}
 
@@ -51,6 +53,31 @@ def test_no_schema_means_no_response_format_and_no_think_is_forwarded_only_when_
     _engine(handler, no_think=True).complete("s", "u")
     assert "response_format" not in bodies[0] and "chat_template_kwargs" not in bodies[0]
     assert bodies[1]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_an_extra_body_is_added_to_every_request_as_it_is_and_has_the_last_word():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return _ok()(request)
+
+    venice = {"venice_parameters": {"disable_thinking": True, "include_venice_system_prompt": False}}
+    _engine(handler).complete("s", "u")
+    _engine(handler, extra_body=venice).complete("s", "u", SCHEMA)
+    _engine(handler, extra_body={"temperature": 0}).complete("s", "u", temperature=0.2)
+    assert "venice_parameters" not in bodies[0]
+    assert bodies[1]["venice_parameters"] == venice["venice_parameters"] and "response_format" in bodies[1]
+    assert bodies[2]["temperature"] == 0
+
+
+def test_an_extra_body_is_a_json_object_or_nothing():
+    assert parse_extra_body("") == {} and parse_extra_body("  ") == {}
+    assert parse_extra_body('{"reasoning_effort": "none"}') == {"reasoning_effort": "none"}
+    with pytest.raises(ValueError, match="not JSON"):
+        parse_extra_body("{reasoning_effort: none}")
+    with pytest.raises(ValueError, match="expected a JSON object, got list"):
+        parse_extra_body('["reasoning_effort"]')
 
 
 def test_completion_reports_tokens_finish_reason_and_time():

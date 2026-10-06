@@ -25,6 +25,11 @@ log = logging.getLogger("xmd")
 
 DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"  # LM Studio's local server
 API_KEY_ENV_VAR = "XMD_LLM_API_KEY"  # the scripts' --api-key default: a key on the command line stays in shell history
+# the scripts' --base-url, --model and --extra-body defaults: a machine that isn't the laptop (a VPS, a phone) says
+# once, in its environment, which server it summarizes with (docs/remote.md)
+BASE_URL_ENV_VAR = "XMD_LLM_BASE_URL"
+MODEL_ENV_VAR = "XMD_LLM_MODEL"
+EXTRA_BODY_ENV_VAR = "XMD_LLM_EXTRA_BODY"
 _WARNED: set[str] = set()  # remote hosts already warned about in this process
 _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
@@ -42,7 +47,21 @@ class ModelChoiceError(ValueError):
     """--model can't be turned into one model id; the message says why and lists the options."""
 
 
-def _on_this_machine(base_url: str) -> bool:
+def parse_extra_body(text: str) -> dict:
+    """--extra-body's argument: a JSON object of fields to add to every request, or nothing. ValueError says why
+    not."""
+    if not text.strip():
+        return {}
+    try:
+        fields = json.loads(text)
+    except ValueError as exc:
+        raise ValueError(f"not JSON ({exc})") from None
+    if not isinstance(fields, dict):
+        raise ValueError(f"expected a JSON object, got {type(fields).__name__}")
+    return fields
+
+
+def on_this_machine(base_url: str) -> bool:
     """Whether `base_url` is a loopback address. If it is not, say so, once per server: what is sent there is the
     export, which holds posts from the accounts you follow, and the API key if there is one. Only the host is
     named, never the rest of the URL, which may carry a password."""
@@ -78,13 +97,17 @@ class Engine:
         api_key: str = "",
         timeout: float = 600.0,
         no_think: bool = False,
+        extra_body: dict | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.no_think = no_think  # send chat_template_kwargs enable_thinking=false (not every server honours it)
+        # fields added to every request as they are: what one provider wants and another ignores (a hosted
+        # Qwen's own switch for thinking, say), so nothing here has to know the provider
+        self.extra_body = extra_body or {}
         self._headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        local = _on_this_machine(base_url)  # (also warns, whoever built the client)
+        local = on_this_machine(base_url)  # (also warns, whoever built the client)
         # a model on this machine is never reached through a system proxy: its prompts hold the follow list
         self._client = client or httpx.Client(timeout=timeout, trust_env=not local)
 
@@ -114,6 +137,7 @@ class Engine:
             }
         if self.no_think:
             body["chat_template_kwargs"] = {"enable_thinking": False}
+        body.update(self.extra_body)
 
         start = time.perf_counter()
         try:
@@ -158,7 +182,7 @@ def list_models(
     """Model ids the server offers (embedding models dropped); None if it has no listing.
     A server that is down raises EngineError, so "down" and "no /models" stay apart."""
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    local = _on_this_machine(base_url)
+    local = on_this_machine(base_url)
     http = client or httpx.Client(timeout=timeout, trust_env=not local)
     try:
         resp = http.get(f"{base_url.rstrip('/')}/models", headers=headers)

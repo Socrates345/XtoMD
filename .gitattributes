@@ -1,0 +1,2 @@
+# deploy/ runs on Linux and Android: LF, whatever platform the checkout or the commit is made on
+deploy/** text eol=lf

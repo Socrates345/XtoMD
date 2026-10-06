@@ -1,0 +1,30 @@
+# The daily brief on the VPS (docs/remote.md; step by step in docs/remote-setup.md). Started by xmd-brief.timer,
+# or by hand:
+#   systemctl start xmd-brief.service      then      journalctl -u xmd-brief.service -e
+#
+# Install: copy this file and xmd-brief.timer to /etc/systemd/system/, then
+#   systemctl daemon-reload && systemctl enable --now xmd-brief.timer
+#
+# The paths assume the repo is at /home/xmd/XtoMD and runs as the user xmd: change all four here if yours
+# differ. `storage:` and `digest_dir:` in sources.yaml must stay inside the repo, the only place this unit
+# may write.
+
+[Unit]
+Description=XtoMD daily brief
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=xmd
+WorkingDirectory=/home/xmd/XtoMD
+ExecStart=/usr/bin/bash /home/xmd/XtoMD/deploy/brief.sh 24h
+# 75: a brief asked for from the phone was already being made, which is not a failure of this one
+SuccessExitStatus=75
+# a run that hangs must not hold the lock for ever
+TimeoutStartSec=45min
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/xmd/XtoMD
+PrivateTmp=true

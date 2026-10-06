@@ -43,7 +43,8 @@ from xmd.summary.budget import (  # noqa: E402
     MAX_COMPRESSION, PRIORITY_SHARE, SUMMARY_SHARE, bare_cuts, choose_compression, parse_minutes, summary_lines,
 )
 from xmd.summary.engine import (  # noqa: E402
-    API_KEY_ENV_VAR, DEFAULT_BASE_URL, Engine, EngineError, ModelChoiceError, choose_model, list_models,
+    API_KEY_ENV_VAR, BASE_URL_ENV_VAR, DEFAULT_BASE_URL, EXTRA_BODY_ENV_VAR, MODEL_ENV_VAR, Engine, EngineError,
+    ModelChoiceError, choose_model, list_models, on_this_machine, parse_extra_body,
 )
 from xmd.summary.prompt import BRIEF_SCHEMA, DEFAULT_PROMPT, bounded_schema, load_prompt  # noqa: E402
 from xmd.summary.runner import (  # noqa: E402
@@ -92,6 +93,14 @@ def time_budget(text: str) -> float:
     """--time's argument (make_brief.py and assemble_brief.py use it too)."""
     try:
         return parse_minutes(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+def extra_body(text: str) -> dict:
+    """--extra-body's argument (make_brief.py uses it too)."""
+    try:
+        return parse_extra_body(text)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
 
@@ -183,10 +192,15 @@ def main(argv: list[str] | None = None) -> int:
     size.add_argument("--compression", type=_compression, default=DEFAULT_COMPRESSION, metavar="RATIO",
                     help="summary words / source words for the regular posts: 0.30 or 30%% (the default) keeps about 30%% "
                          "of their words, 0.10 about 10%%. Retweets and the recap group keep their own fixed shares")
-    ap.add_argument("--model", default="", help="model id, or part of one; omit it when the server offers just one")
-    ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help="default: LM Studio")
+    ap.add_argument("--model", default=os.environ.get(MODEL_ENV_VAR, ""),
+                    help=f"model id, or part of one; omit it when the server offers just one (default: ${MODEL_ENV_VAR})")
+    ap.add_argument("--base-url", default=os.environ.get(BASE_URL_ENV_VAR) or DEFAULT_BASE_URL,
+                    help=f"default: ${BASE_URL_ENV_VAR}, else LM Studio")
     ap.add_argument("--api-key", default=os.environ.get(API_KEY_ENV_VAR, ""),
                     help=f"only if the runtime wants one (default: ${API_KEY_ENV_VAR}; a key typed here stays in your shell history)")
+    ap.add_argument("--extra-body", type=extra_body, default=os.environ.get(EXTRA_BODY_ENV_VAR, ""), metavar="JSON",
+                    help=f"a JSON object of fields added to every request, for what one provider wants and no other "
+                         f"(default: ${EXTRA_BODY_ENV_VAR}; docs/remote.md has Venice's)")
     ap.add_argument("--export", default="", help="export .txt to brief (default: the newest in DIGESTS/.export)")
     ap.add_argument("--digests-dir", default="digests")
     ap.add_argument("--sources-dir", default="sources", help="where x.md is: its `## group | high` / `| low` levels set how much each group keeps")
@@ -257,7 +271,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         model, note = choose_model(args.model, list_models(args.base_url, args.api_key))
     except EngineError as exc:
-        print(f"\ncannot reach the server: {exc}\nLM Studio: Developer tab -> start the server (port 1234).")
+        print(f"\ncannot reach the server: {exc}")
+        if on_this_machine(args.base_url):
+            print("LM Studio: Developer tab -> start the server (port 1234).")
         return 1
     except ModelChoiceError as exc:
         print(f"\n{exc}")
@@ -266,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{note}")
 
     started = datetime.now(timezone.utc)
-    with Engine(model, args.base_url, args.api_key, args.timeout, args.no_think) as engine:
+    with Engine(model, args.base_url, args.api_key, args.timeout, args.no_think, args.extra_body) as engine:
         if args.stats:
             print(f"\nmodel {model}" + ("  (thinking off requested)" if args.no_think else ""))
         try:  # loads the model outside the timed calls, and a thinking model fails here, not after ten calls
@@ -290,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         "started_at": started.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "engine": {"base_url": args.base_url, "model": model, "no_think": args.no_think,
+                   "extra_body": args.extra_body,  # assemble_brief.py sends the same with its own calls
                    "temperature": args.temperature, "retries": args.retries, "bound_items": args.bound_items,
                    "warmup_seconds": round(warm.seconds, 1)},
         "compression_ratio": args.compression,

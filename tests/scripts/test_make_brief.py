@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,9 @@ class World:
         self.run_code = 0
         self.writes_run = True
         self.runs_made = 0
+        self.warmup_extra_body: dict | None = None  # what the warm-up call was told to add to its request
+        for var in ("XMD_LLM_BASE_URL", "XMD_LLM_MODEL", "XMD_LLM_EXTRA_BODY"):  # the tester's own, if any
+            monkeypatch.delenv(var, raising=False)
         config = Config(sources=[Source(name="@alice", type="twitterapi", handle="alice")], x_api_key="k",
                         storage=tmp_path / "t.db", digest_dir=self.digests)
         monkeypatch.setattr(make_brief, "load_config", lambda path: config)
@@ -41,8 +45,9 @@ class World:
             raise EngineError("connection refused")
         return self.models
 
-    def _engine(self, model, base_url, api_key, timeout):
+    def _engine(self, model, base_url, api_key, timeout, extra_body=None):
         world = self
+        world.warmup_extra_body = extra_body
 
         class Engine:
             def __enter__(self):
@@ -149,6 +154,59 @@ def test_it_gives_up_without_fetching_when_the_server_never_comes_up(monkeypatch
 
     assert make_brief.main(["--24h", "--wait", "0"]) == 1  # 0: no waiting at all
     assert world.calls == []
+
+
+VENICE = "https://api.venice.ai/api/v1"
+NO_THINKING = {"venice_parameters": {"disable_thinking": True}}
+
+
+def test_a_server_elsewhere_that_is_down_is_not_waited_for_and_nobody_is_told_to_open_LM_Studio(monkeypatch, tmp_path, capsys):
+    world = World(monkeypatch, tmp_path)
+    world.down_polls = 5
+
+    assert make_brief.main(["--24h", "--base-url", VENICE]) == 1  # the default --wait is 900 s
+
+    assert world.calls == [] and world.down_polls == 4  # one look, no fetch
+    out = capsys.readouterr().out
+    assert "cannot reach the server" in out and "LM Studio" not in out
+
+
+def test_the_environment_names_the_server_the_model_and_the_extra_body_and_a_flag_wins(monkeypatch, tmp_path):
+    world = World(monkeypatch, tmp_path)
+    monkeypatch.setenv("XMD_LLM_BASE_URL", VENICE)
+    monkeypatch.setenv("XMD_LLM_MODEL", "other/model")
+    monkeypatch.setenv("XMD_LLM_EXTRA_BODY", json.dumps(NO_THINKING))
+
+    assert make_brief.main(["--24h"]) == 0
+
+    run_argv = world.call("run_system")[1]
+    assert _after(run_argv, "--base-url") == VENICE and _after(run_argv, "--model") == "other/model"
+    assert json.loads(_after(run_argv, "--extra-body")) == NO_THINKING  # run_system records it for the assembly
+    assert world.warmup_extra_body == NO_THINKING  # a model that thinks would fail the warm-up without it
+
+    make_brief.main(["--24h", "--model", "qwen/qwen3.5-9b", "--extra-body", '{"reasoning_effort": "none"}'])
+    run_argv = [c for c in world.calls if c[0] == "run_system"][-1][1]
+    assert _after(run_argv, "--model") == "qwen/qwen3.5-9b"
+    assert json.loads(_after(run_argv, "--extra-body")) == {"reasoning_effort": "none"}
+
+
+def test_without_an_extra_body_none_is_passed_on(monkeypatch, tmp_path):
+    world = World(monkeypatch, tmp_path)
+
+    make_brief.main(["--24h"])
+
+    assert "--extra-body" not in world.call("run_system")[1] and not world.warmup_extra_body
+
+
+@pytest.mark.parametrize("text", ["{not json", '["a", "list"]'])
+def test_an_extra_body_that_is_not_a_json_object_stops_before_anything_starts(monkeypatch, tmp_path, capsys, text):
+    world = World(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as stop:
+        make_brief.main(["--24h", "--extra-body", text])
+
+    assert stop.value.code == 2 and world.calls == []
+    assert "--extra-body" in capsys.readouterr().err
 
 
 def test_a_model_name_that_fits_several_stops_before_anything_is_fetched(monkeypatch, tmp_path, capsys):

@@ -22,12 +22,24 @@ def test_a_brief_never_replaces_an_earlier_one(tmp_path):
     assert first.read_text(encoding="utf-8") == "the 30% brief"
 
 
+def test_the_calls_made_here_go_to_the_runs_own_server_with_the_runs_own_extra_body():
+    args = argparse.Namespace(model="", base_url="", api_key="")
+    venice = {"venice_parameters": {"disable_thinking": True}}
+    run_engine = {"model": "qwen3-5-9b", "base_url": "https://api.venice.ai/api/v1", "extra_body": venice}
+    with assemble_brief._engine(args, run_engine) as engine:
+        assert (engine.model, engine.base_url, engine.extra_body) == ("qwen3-5-9b", run_engine["base_url"], venice)
+    with assemble_brief._engine(args, {"model": "m", "base_url": "http://127.0.0.1:1234/v1"}) as engine:
+        assert engine.extra_body == {}  # a run made before there was one
+
+
 def test_time_and_compression_are_one_or_the_other(capsys):
     with pytest.raises(SystemExit):
         run_system.main(["--time", "10", "--compression", "0.1", "--dry-run"])
     assert "not allowed with argument" in capsys.readouterr().err
     with pytest.raises(argparse.ArgumentTypeError, match="number of minutes"):
         run_system.time_budget("ten")
+    with pytest.raises(argparse.ArgumentTypeError, match="not JSON"):
+        run_system.extra_body("{thinking: off}")
 
 
 # the brief without its summaries, uncut and at its barest: 2 minutes of priority tweets, 17 of image tweets
