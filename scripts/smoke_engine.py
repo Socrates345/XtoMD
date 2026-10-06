@@ -74,6 +74,10 @@ def _bounded(most: int) -> dict:
 # and roughly three times the posts for three days (~27, the per-tier remainders don't triple)
 CALLS_24H, CALLS_3D = 10, 27
 PLANNED_OUT = 1200  # tokens a real chunk's reply runs to (plan §4: ~5K in, ~1.2K out)
+CHUNK_ITEMS = 20  # the most items the full-chunk test allows
+# its token cap: what a real chunk allowed that many items gets (xmd.summary.runner.reply_budget), 100 tokens an
+# item plus the JSON around them. A tighter cap fails a server whose items are no longer than a real brief's.
+CHUNK_REPLY_TOKENS = 100 * CHUNK_ITEMS + 300
 
 _SUBJECTS = [
     "Nordvik Semiconductor", "the Harlow city council", "Kestrel Motors",
@@ -254,9 +258,27 @@ thinking is probably on: the model spends its tokens reasoning before it answers
   A hosted model takes its provider's own switch in --extra-body (docs/remote.md has Venice's)."""
 
 
-def _problem(reply: Reply, posts: int, most: int) -> str | None:
-    """What is wrong with a structured reply, or None."""
-    return _empty_note(reply) if not reply.text.strip() else _brief_problem(reply.text, posts, most)
+def _cut_note(text: str, most: int, cap: int) -> str:
+    """What a reply cut off by the token cap looked like: more items than the schema allows (the server ignores
+    maxItems, so nothing but the prompt limits a reply), or items too long for a real chunk's budget."""
+    begun = text.count('"headline"')
+    if begun > most:
+        return (f"cut off by the {cap}-token cap after {begun} items where the schema allows {most}: "
+                "the server does not enforce maxItems")
+    return (f"cut off by the {cap}-token cap after {begun} item(s) of at most {most}: "
+            f"~{cap // max(begun, 1)} tokens an item, where a real chunk has room for 100")
+
+
+def _problem(reply: Reply, posts: int, most: int, cap: int) -> str | None:
+    """What is wrong with a structured reply, or None. `cap` is the max_tokens it was given."""
+    if not reply.text.strip():
+        return _empty_note(reply)
+    if reply.finish == "length":
+        try:
+            json.loads(reply.text)
+        except ValueError:
+            return _cut_note(reply.text, most, cap)
+    return _brief_problem(reply.text, posts, most)
 
 
 def _extra_body(text: str) -> dict:
@@ -362,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
             replies.append(reply)
             out = reply.usage.get("completion_tokens") or len(reply.text) // 4
             gen_rate = out / reply.seconds
-            problem = _problem(reply, 12, 5)
+            problem = _problem(reply, 12, 5, 700)
             print(f"2. json schema  {'OK  ' if not problem else 'FAIL'}  "
                   f"{out} tokens out in {reply.seconds:.1f} s = {out / reply.seconds:.1f} tok/s"
                   + (f"   {problem}" if problem else ""))
@@ -370,16 +392,16 @@ def main(argv: list[str] | None = None) -> int:
 
         # 3. a full-size chunk: what one real call will cost, and whether the context holds it
         # a nonce first, so a prompt cached by an earlier run can't make this look faster than a fresh chunk
-        user = f"Batch {uuid.uuid4().hex[:8]}\n\n" + _prompt(args.chunk_posts, 20)
+        user = f"Batch {uuid.uuid4().hex[:8]}\n\n" + _prompt(args.chunk_posts, CHUNK_ITEMS)
         try:
-            reply = _chat(client, base, model, user, _bounded(20), 1500, **ask)
+            reply = _chat(client, base, model, user, _bounded(CHUNK_ITEMS), CHUNK_REPLY_TOKENS, **ask)
         except httpx.HTTPError as exc:
             print(f"3. full chunk   FAIL  {_why(exc)}")
             failed = True
         else:
             replies.append(reply)
             tokens_in, tokens_out = reply.usage.get("prompt_tokens"), reply.usage.get("completion_tokens")
-            problem = _problem(reply, args.chunk_posts, 20)
+            problem = _problem(reply, args.chunk_posts, CHUNK_ITEMS, CHUNK_REPLY_TOKENS)
             if tokens_in and tokens_in < 0.7 * len(user) / 4:
                 # servers with a small default context cut the prompt without an error
                 problem = (f"context too small: sent ~{len(user) // 4} tokens, server counted {tokens_in}, "
@@ -394,8 +416,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"                ~{per_call:.0f} s per call (a real reply runs ~{PLANNED_OUT} tokens): "
                   f"24h export (~{CALLS_24H} calls) ~ {per_call * CALLS_24H / 60:.1f} min, "
                   f"3-day (~{CALLS_3D} calls) ~ {per_call * CALLS_3D / 60:.1f} min")
-            if reply.finish == "length":
-                print("                note: the reply hit the 1500-token cap")
+            if reply.finish == "length" and not problem:
+                print(f"                note: the reply hit the {CHUNK_REPLY_TOKENS}-token cap")
             failed |= bool(problem)
         if any(not r.text.strip() and r.finish == "length" for r in replies):
             print(f"\n{THINKING_HINT}")

@@ -185,16 +185,47 @@ All of it is inert on the laptop, where none of the `XMD_LLM_*` variables is set
 
 - **Change the hour:** edit `OnCalendar=` in `/etc/systemd/system/xmd-brief.timer`, then `systemctl daemon-reload`.
 - **Change what the timer makes:** edit `ExecStart=` in `xmd-brief.service` (for example `brief.sh 24h 15`), then `systemctl daemon-reload`.
-- **Update the code:** `git pull` on each machine; `.venv/bin/pip install -e .` only when `pyproject.toml` changed; on the phone `bash deploy/termux/setup.sh` again when the buttons changed. The unit files in `/etc/systemd/system/` are copies: copy them again when they change in the repo.
+- **Update the code:** see [Updating the code](#updating-the-code) below.
 - **Change the follow list:** edit `sources/x.md` on the machine that makes the briefs. The laptop's copy and the VPS's are separate files.
 - **Revoke the phone:** delete its line from `/home/xmd/.ssh/authorized_keys`.
 - **Move to another VPS:** set up the new one, then copy `sources.yaml`, `sources/`, `.env` and, if you want its history, `xmd.db`.
 - **Cost:** at Venice's listed price on 2026-10-06 ($0.10 per million tokens in, $0.15 out), a brief costs about one cent: the summaries of 14 runs averaged 56K tokens in and 11K out (27K to 104K in), and the section summaries and translations, which are not counted, add an estimated 25K in and 6K out. Each machine that makes briefs fetches for itself, so the VPS's daily run adds its own calls to your X backend's quota.
 
+### Updating the code
+
+1. **On the laptop:** commit and push, new files included (`git add -A`).
+2. **On the VPS, as `xmd`:**
+
+   ```bash
+   cd ~/XtoMD
+   git pull
+   git log --oneline -1        # shows the commit you just pushed
+   ```
+
+   Logged in as root? `su - xmd` first: a pull made as root leaves root-owned files that the timer's run cannot write to.
+
+That is usually all. The code is installed in editable mode, so the pulled files are what runs, and the timer uses them on its next run with nothing to restart. Two cases need one more step:
+
+| If this changed in the repo | Then also run |
+| --- | --- |
+| `pyproject.toml` (dependencies) | As `xmd`: `.venv/bin/pip install -e .` |
+| `deploy/vps/xmd-brief.service` or `xmd-brief.timer` | As root, the two commands below: the files in `/etc/systemd/system/` are copies. |
+
+```bash
+cp /home/xmd/XtoMD/deploy/vps/xmd-brief.service /home/xmd/XtoMD/deploy/vps/xmd-brief.timer /etc/systemd/system/
+systemctl daemon-reload
+```
+
+`git diff --stat HEAD@{1}` right after the pull lists the files it changed, if you are not sure.
+
+- **Your settings are never touched.** `.env`, `sources.yaml`, `sources/`, `digests/` and `xmd.db` are git-ignored.
+- **`git pull` refuses because of "local changes":** a tracked file was edited on the VPS; `git status` names it. `git restore FILE` drops that edit, then pull again.
+- **The phone** updates the same way: `git pull` in `~/XtoMD` inside Termux, then `bash deploy/termux/setup.sh` again when the buttons changed.
+
 ## Limits
 
-- **Not yet run for real.** The scripts were tested with stand-ins (`tests/deploy/`) and the pipeline against a local stand-in server. Venice itself, the systemd units on a real server and everything in Termux have not been run. Expect a small fix or two on first use.
-- **The item bounds on Venice are unconfirmed.** If Venice refuses `minItems`/`maxItems`, the smoke test says so. `run_system.py --no-bound-items` runs without them, but `make_brief.py` and `brief.sh` do not pass that flag on yet.
+- **Only partly run for real.** On 2026-10-06 the smoke test reached Venice from a VPS: the key, the thinking switch and the closed schemas work (lines 1 and 2 `OK`). A whole brief on Venice, the systemd units and everything in Termux have not been run yet; the scripts were tested with stand-ins (`tests/deploy/`). Expect a small fix or two on first use.
+- **Whether Venice enforces the item bounds is not known.** It accepts `minItems`/`maxItems` (no `HTTP 400`), but that same day the full-chunk test was cut off at 1,500 tokens, a cap tighter than a real chunk's. The test now gives 20 items the 2,300 tokens a real chunk gets and, when a reply is still cut off, says whether it held more items than allowed (bounds ignored) or longer ones. If the bounds are ignored, only the prompt limits a reply, and a chunk that overruns its budget is retried once, then listed under "Not summarized": `scripts/run_stats.py` counts those.
 - **A scheduled run on the phone is not dependable.** Android decides when background work runs. That is why the VPS is the routine.
 - **The model on the phone itself is not set up.** When a phone can hold Qwen 3.5 9B in memory, a local server (llama.cpp's `llama-server`) can replace Venice: point `XMD_LLM_BASE_URL` at it and remove `XMD_LLM_EXTRA_BODY`. On a Pixel it runs on the CPU, so expect about an hour per brief (an estimate).
 - **Delivery ends at a folder.** Nothing writes into the Obsidian vault for you.
@@ -210,6 +241,7 @@ All of it is inert on the laptop, where none of the `XMD_LLM_*` variables is set
 | `HTTP 402 ... API key DIEM spend limit exceeded` (or `USD spend limit`) | The key has its own daily cap, and it is 0 or used up, whatever the account's balance. In Venice's API settings, clear the key's Epoch Consumption Limits or raise them (0.25 covers many briefs), or make a new key without them and put it in `.env`. A cap that was simply used up comes back with the next 24-hour epoch. |
 | `LM Studio's server is not answering at http://127.0.0.1:1234/v1` on the VPS or phone | `.env` is missing or has no `XMD_LLM_BASE_URL`, so the scripts fell back to the laptop's default. |
 | Smoke test: `FAIL` on line 2 or 3 with `HTTP 400`, or `does not enforce maxItems` | Venice does not take the item bounds: see [Limits](#limits). |
+| Smoke test: `cut off by the 2300-token cap after N item(s) of at most 20` | The model's items are longer than a real chunk has room for (100 tokens each). Run it again: if it repeats, expect some chunks under "Not summarized" in a brief. |
 | `a brief is already being made on this machine` (exit 75) | The timer's run and yours overlapped. Wait a few minutes, then `brief-vps-latest`. |
 | `allowed: run 24h\|since [MINUTES] \| pull [DAYS]` | The VPS refused a request the phone's key may not make. That is the limit working. |
 | `Permission denied (publickey)` from the phone | The key's line in `authorized_keys` is broken over two lines, or `~/.ssh/config` names another key. |

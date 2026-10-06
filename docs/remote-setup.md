@@ -294,4 +294,4 @@ termux-job-scheduler --job-id 1 --script ~/.shortcuts/brief-phone-24h --period-m
 - If the VPS is down: `brief-phone-24h`, once part 4 is done.
 - At home, the laptop works as before. Its briefs and the VPS's are independent.
 
-Keeping it running (changing the hour, updating the code, revoking the phone) is in [remote.md](remote.md#running-it-day-to-day).
+Keeping it running (changing the hour, revoking the phone) is in [remote.md](remote.md#running-it-day-to-day). After each `git push` from the laptop, bring the VPS and the phone up to date: [Updating the code](remote.md#updating-the-code).
