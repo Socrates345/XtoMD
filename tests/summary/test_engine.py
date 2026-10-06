@@ -6,7 +6,7 @@ import pytest
 
 from xmd.summary import engine as engine_module
 from xmd.summary.engine import (
-    Engine, EngineError, ModelChoiceError, choose_model, list_models, parse_extra_body, parse_json,
+    Engine, EngineError, ModelChoiceError, choose_model, list_models, parse_extra_body, parse_json, refusal_hint,
 )
 
 SCHEMA = {"type": "object", "properties": {"items": {"type": "array"}}, "required": ["items"]}
@@ -111,8 +111,21 @@ def test_an_empty_reply_without_reasoning_is_still_an_error_but_does_not_blame_t
 
 
 def test_http_errors_carry_status_and_body():
-    with pytest.raises(EngineError, match=r"HTTP 400: .*not supported"):
+    with pytest.raises(EngineError, match=r"HTTP 400: .*not supported") as error:
         _engine(lambda r: httpx.Response(400, text="response_format not supported")).complete("s", "u")
+    assert error.value.status == 400
+
+
+@pytest.mark.parametrize("status, word", [(401, "API key"), (403, "API key"), (402, "spending limit"), (429, "rate limit")])
+def test_a_request_refused_over_the_key_or_the_account_says_what_to_check(status, word):
+    with pytest.raises(EngineError) as error:
+        _engine(lambda r: httpx.Response(status, text="no")).complete("s", "u")
+    assert word in refusal_hint(error.value.status)
+
+
+def test_other_failures_have_no_such_hint():
+    assert refusal_hint(400) == refusal_hint(500) == refusal_hint(None) == ""
+    assert EngineError("server down").status is None
 
 
 def test_an_unreachable_server_is_an_engine_error():

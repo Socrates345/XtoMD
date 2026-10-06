@@ -189,7 +189,7 @@ All of it is inert on the laptop, where none of the `XMD_LLM_*` variables is set
 - **Change the follow list:** edit `sources/x.md` on the machine that makes the briefs. The laptop's copy and the VPS's are separate files.
 - **Revoke the phone:** delete its line from `/home/xmd/.ssh/authorized_keys`.
 - **Move to another VPS:** set up the new one, then copy `sources.yaml`, `sources/`, `.env` and, if you want its history, `xmd.db`.
-- **Cost:** at Venice's listed price on 2026-10-06 ($0.10 per million tokens in, $0.15 out), a day of about 47K tokens in and 9K out is under a cent. Each machine that makes briefs fetches for itself, so the VPS's daily run adds its own calls to your X backend's quota.
+- **Cost:** at Venice's listed price on 2026-10-06 ($0.10 per million tokens in, $0.15 out), a brief costs about one cent: the summaries of 14 runs averaged 56K tokens in and 11K out (27K to 104K in), and the section summaries and translations, which are not counted, add an estimated 25K in and 6K out. Each machine that makes briefs fetches for itself, so the VPS's daily run adds its own calls to your X backend's quota.
 
 ## Limits
 
@@ -205,7 +205,9 @@ All of it is inert on the laptop, where none of the `XMD_LLM_*` variables is set
 | --- | --- |
 | `cannot reach the server, nothing was fetched` | The machine cannot reach Venice (network, or a typo in `XMD_LLM_BASE_URL`). A hosted server is not waited for: run it again. |
 | `the model did not answer ... spent its tokens thinking`, or empty replies | `XMD_LLM_EXTRA_BODY` is missing or lost its single quotes. |
-| `HTTP 401` or `HTTP 402` | The Venice key is wrong, or the credit ran out. |
+| `HTTP 401` | The Venice key is wrong: check `XMD_LLM_API_KEY` in `.env` (no spaces, no quotes, the whole key). |
+| `HTTP 402 ... Insufficient USD or Diem balance` | The account has no credit left: add some in Venice's API settings. |
+| `HTTP 402 ... API key DIEM spend limit exceeded` (or `USD spend limit`) | The key has its own daily cap, and it is 0 or used up, whatever the account's balance. In Venice's API settings, clear the key's Epoch Consumption Limits or raise them (0.25 covers many briefs), or make a new key without them and put it in `.env`. A cap that was simply used up comes back with the next 24-hour epoch. |
 | `LM Studio's server is not answering at http://127.0.0.1:1234/v1` on the VPS or phone | `.env` is missing or has no `XMD_LLM_BASE_URL`, so the scripts fell back to the laptop's default. |
 | Smoke test: `FAIL` on line 2 or 3 with `HTTP 400`, or `does not enforce maxItems` | Venice does not take the item bounds: see [Limits](#limits). |
 | `a brief is already being made on this machine` (exit 75) | The timer's run and yours overlapped. Wait a few minutes, then `brief-vps-latest`. |

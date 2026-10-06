@@ -52,8 +52,9 @@ The `.pub` line is what you give the VPS provider.
 
 ## 1. Venice
 
-1. Sign in at venice.ai, open the API settings, create an API key and copy it somewhere safe. It is shown once.
-2. Add a few dollars of credit. A brief costs under a cent.
+1. Sign in at venice.ai, open the API settings, create an API key and copy it somewhere safe. It is shown once. (Key permissions restricted to inference are sufficient and good, you needn't admin control, especially securitywise)
+2. Leave the key's **Epoch Consumption Limits** (DIEM and USD) empty, or set each to 0.25 or more. They cap what this key may spend per day (1 DIEM pays for $1 of use), separately from your balance; a limit of 0, or one already used up, makes every request fail with `HTTP 402`.
+3. Add a few dollars of credit. A brief costs about one cent.
 
 **Check:** you have the key. It is tested in step 2.4.
 
@@ -113,7 +114,7 @@ GIT_SSH_COMMAND='ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes' git clone -b rem
 cd XtoMD && git config core.sshCommand 'ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes'   # so "git pull" works later
 ```
 
-Then copy your configuration over. It is git-ignored, so the clone does not have it. On the laptop, in PowerShell, from the repo root:
+Then copy your configuration over. It is git-ignored, so the clone does not have it. `scp` is run **on the laptop**, where the files are, and pushes them to the server: open a new PowerShell window (not the SSH session, which is a shell on the VPS), go to the repo root, then:
 
 ```powershell
 scp sources.yaml xmd@VPS_ADDRESS:XtoMD/
@@ -122,6 +123,9 @@ scp xmd.db xmd@VPS_ADDRESS:XtoMD/         # optional: brings 14 days of history,
 ```
 
 Leave `storage:` and `digest_dir:` in `sources.yaml` at their defaults: the daily run may write inside the repo only.
+
+For noobs: (nano ~/XtoMD/sources.yaml)
+(In nano: edit with the arrow keys, then Ctrl+O and Enter to save, Ctrl+X to quit.)
 
 **Check**, on the VPS in `~/XtoMD`: `.venv/bin/xmd sources | head -3` lists handles of yours.
 
@@ -143,7 +147,7 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/smoke_engine.py
 ```
 
-**Check:** the first line names `https://api.venice.ai/api/v1` and `qwen3-5-9b`, and lines 1, 2 and 3 all say `OK`. If line 2 or 3 says `FAIL`, stop here: see [Limits](remote.md#limits).
+**Check:** the first line names `https://api.venice.ai/api/v1` and `qwen3-5-9b`, and lines 1, 2 and 3 all say `OK`. If line 1 says `FAIL  HTTP 401` or `HTTP 402`, it is the key or its spending limit: see [Troubleshooting](remote.md#troubleshooting). If line 2 or 3 says `FAIL`, stop here: see [Limits](remote.md#limits).
 
 ### 2.5 A first brief
 

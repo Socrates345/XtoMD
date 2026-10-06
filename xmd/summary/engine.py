@@ -38,9 +38,10 @@ _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 class EngineError(RuntimeError):
     """The engine gave no usable reply: unreachable, refused, empty, cut off, or not JSON."""
 
-    def __init__(self, message: str, completion: Completion | None = None) -> None:
+    def __init__(self, message: str, completion: Completion | None = None, status: int | None = None) -> None:
         super().__init__(message)
         self.completion = completion  # what did come back, when something did (finish reason, token counts)
+        self.status = status  # the HTTP status, when the server answered with an error
 
 
 class ModelChoiceError(ValueError):
@@ -59,6 +60,19 @@ def parse_extra_body(text: str) -> dict:
     if not isinstance(fields, dict):
         raise ValueError(f"expected a JSON object, got {type(fields).__name__}")
     return fields
+
+
+def refusal_hint(status: int | None) -> str:
+    """What to check when a server turned a request down over the key or the account behind it: nothing the model's
+    settings or another try will change. "" for any other failure."""
+    if status in (401, 403):
+        return f"The server turned the API key down: check ${API_KEY_ENV_VAR} (in .env, or --api-key)."
+    if status == 402:
+        return ("The provider wants payment: the account has no credit left, or this API key has reached the "
+                "spending limit set on it. That is changed on the provider's site, not here.")
+    if status == 429:
+        return "The provider's rate limit was reached: wait a few minutes and run it again."
+    return ""
 
 
 def on_this_machine(base_url: str) -> bool:
@@ -146,7 +160,7 @@ class Engine:
             raise EngineError(f"{self.base_url}: {type(exc).__name__}: {exc}") from exc
         seconds = time.perf_counter() - start
         if resp.status_code >= 400:
-            raise EngineError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+            raise EngineError(f"HTTP {resp.status_code}: {resp.text[:300]}", status=resp.status_code)
         try:
             data = resp.json()
             choice = data["choices"][0]

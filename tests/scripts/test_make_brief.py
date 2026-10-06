@@ -20,6 +20,7 @@ class World:
         self.models = ["qwen/qwen3.5-9b", "other/model"]
         self.down_polls = 0  # looks at the server that fail before it answers
         self.warmup_error = ""
+        self.warmup_status: int | None = None  # the HTTP status the warm-up call is refused with
         self.digests = tmp_path / "digests"
         self.export: Path | None = self.digests / ".export" / "2026-09-21-1000.txt"
         self.run_code = 0
@@ -58,7 +59,7 @@ class World:
 
             def complete(self, system, user, max_tokens):
                 if world.warmup_error:
-                    raise EngineError(world.warmup_error)
+                    raise EngineError(world.warmup_error, status=world.warmup_status)
                 world.calls.append(("warm-up", model))
                 return SimpleNamespace(seconds=0.1)
 
@@ -236,6 +237,16 @@ def test_a_model_that_does_not_answer_stops_before_anything_is_fetched(monkeypat
     assert world.calls == []
     out = capsys.readouterr().out
     assert "spent its tokens thinking" in out and "Thinking must be off" in out
+
+
+def test_a_key_over_its_spending_limit_is_reported_as_that_and_not_as_a_thinking_model(monkeypatch, tmp_path, capsys):
+    world = World(monkeypatch, tmp_path)
+    world.warmup_error, world.warmup_status = "HTTP 402: spend limit exceeded", 402
+
+    assert make_brief.main(["--24h", "--base-url", "https://api.example.com/v1"]) == 1
+    assert world.calls == []  # nothing fetched: the window is still there for the next run
+    out = capsys.readouterr().out
+    assert "HTTP 402" in out and "spending limit" in out and "Thinking" not in out
 
 
 def test_nothing_new_in_the_window_makes_no_brief(monkeypatch, tmp_path):

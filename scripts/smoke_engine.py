@@ -27,6 +27,7 @@ is the baseline); watch Task Manager for RAM. VRAM is read from nvidia-smi.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import shutil
@@ -35,6 +36,7 @@ import sys
 import time
 import uuid
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 import httpx
 
@@ -148,6 +150,29 @@ def _why(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"
     return f"{type(exc).__name__}: {exc}"
+
+
+def _on_this_machine(base: str) -> bool:
+    """Whether `base` is a loopback address: LM Studio or another local runtime, not a hosted model."""
+    host = urlparse(base).hostname or ""
+    try:
+        return host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:  # a name, not an address
+        return False
+
+
+def _refusal_hint(status: int, local: bool) -> str:
+    """What to check after the server answered the first call with an error (as xmd.summary.engine.refusal_hint)."""
+    if status in (401, 403):
+        return "the server turned the API key down: check $XMD_LLM_API_KEY (in .env, or --api-key)."
+    if status == 402:
+        return ("the provider wants payment: the account has no credit left, or this API key has reached the\n"
+                "spending limit set on it. That is changed on the provider's site, not here.")
+    if status == 429:
+        return "the provider's rate limit was reached: wait a few minutes and run it again."
+    if local:
+        return "model not loaded? Load it in LM Studio, or turn on Just-In-Time loading."
+    return "wrong model id? --list shows what the server offers."
 
 
 def _models(client: httpx.Client, base: str) -> list[str] | None:
@@ -284,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
 
     base = args.base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {args.api_key}"} if args.api_key else {}
+    local = _on_this_machine(base)  # a hosted model has no LM Studio to open and no VRAM to read here
     failed = False
 
     with httpx.Client(headers=headers, timeout=args.timeout) as client:
@@ -291,7 +317,8 @@ def main(argv: list[str] | None = None) -> int:
             models = _models(client, base)
         except httpx.TransportError as exc:
             print(f"cannot reach {base}: {type(exc).__name__}: {exc}")
-            print("LM Studio: Developer tab -> start the server (port 1234). Another runtime: pass --base-url.")
+            if local:
+                print("LM Studio: Developer tab -> start the server (port 1234). Another runtime: pass --base-url.")
             return 1
         if args.list:
             print("\n".join(models) if models else "no models listed")
@@ -304,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             print("thinking: off requested (chat_template_kwargs)")
         if args.extra_body:
             print(f"extra body: {', '.join(args.extra_body)}")
-        print(f"VRAM before: {_vram()}\n")
+        print(f"VRAM before: {_vram()}\n" if local else "")
         ask = {"no_think": args.no_think, "extra": args.extra_body}
         replies: list[Reply] = []
         gen_rate = 0.0  # tokens/s, from check 2 (short prompt, so close to pure generation)
@@ -315,7 +342,8 @@ def main(argv: list[str] | None = None) -> int:
         except httpx.HTTPError as exc:
             print(f"1. endpoint     FAIL  {_why(exc)}")
             if isinstance(exc, httpx.HTTPStatusError):
-                print("                model not loaded? Load it in LM Studio, or turn on Just-In-Time loading.")
+                hint = _refusal_hint(exc.response.status_code, local)
+                print("\n".join(f"                {line}" for line in hint.splitlines()))
             return 1
         replies.append(reply)
         problem = None if reply.text.strip() else _empty_note(reply)
@@ -371,7 +399,8 @@ def main(argv: list[str] | None = None) -> int:
             failed |= bool(problem)
         if any(not r.text.strip() and r.finish == "length" for r in replies):
             print(f"\n{THINKING_HINT}")
-        print(f"\nVRAM after (model still loaded): {_vram()}")
+        if local:
+            print(f"\nVRAM after (model still loaded): {_vram()}")
 
     return 1 if failed else 0
 

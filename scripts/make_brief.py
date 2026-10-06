@@ -39,7 +39,7 @@ from xmd import cli  # noqa: E402
 from xmd.core.config import load_config  # noqa: E402
 from xmd.summary.engine import (  # noqa: E402
     API_KEY_ENV_VAR, BASE_URL_ENV_VAR, DEFAULT_BASE_URL, EXTRA_BODY_ENV_VAR, MODEL_ENV_VAR, Engine, EngineError,
-    ModelChoiceError, choose_model, list_models, on_this_machine,
+    ModelChoiceError, choose_model, list_models, on_this_machine, refusal_hint,
 )
 
 DEFAULT_MODEL = "qwen/qwen3.5-9b"  # the setup the README describes and tests
@@ -137,8 +137,9 @@ def main(argv: list[str] | None = None) -> int:
             warm = engine.complete("Reply with one word.", "ok", max_tokens=16)
     except EngineError as exc:
         print(f"the model did not answer, nothing was fetched: {exc}\n"
-              + ("Thinking must be off and the context length 8192 or more (README, LM Studio setup)." if local else
-                 "Thinking must be off: a hosted model takes its own switch for that in --extra-body (docs/remote.md)."))
+              + (refusal_hint(exc.status) or
+                 ("Thinking must be off and the context length 8192 or more (README, LM Studio setup)." if local else
+                  "Thinking must be off: a hosted model takes its own switch for that in --extra-body (docs/remote.md).")))
         return 1
     print(f"ok in {warm.seconds:.1f} s\n")
 
