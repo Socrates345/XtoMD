@@ -148,6 +148,8 @@ bash deploy/termux/vps.sh pull 7         # ... of the last 7 days
 
 A download never replaces a brief already in the folder.
 
+By hand, the phone reaches the VPS as `ssh xmd-vps` (`ssh xmd-vps pull | tar -tf -` lists what there is to download), never as `ssh xmd@VPS_ADDRESS`: that form skips the phone's key and is refused with `Permission denied (publickey)`. It is the laptop's command.
+
 **The buttons** (Termux:Widget):
 
 | Button | Runs |
@@ -266,7 +268,7 @@ systemctl daemon-reload
 | `the connection to the VPS failed or was lost` on the phone | No network, or it dropped during the run. A brief that had started is finished on the VPS all the same: `brief-vps-latest` in a few minutes. If it never arrives, the run had not started: ask again. |
 | Nothing new for a while after `[2/5] fetch` | The fetch is the long step: the X backend limits how fast accounts are read. It prints `fetching sources: N/TOTAL` every 30 seconds. |
 | `allowed: run 24h\|since [MINUTES] \| pull [DAYS]` | The VPS refused a request the phone's key may not make. That is the limit working. |
-| `Permission denied (publickey)` from the phone | The server does not know the key the phone offers. Compare fingerprints: `ssh-keygen -lf ~/.ssh/authorized_keys` on the VPS as `xmd`, `ssh-keygen -lf ~/.ssh/id_xmd.pub` in Termux. **Not listed on the VPS:** the line was added as root (so to root's file), glued to the end of the laptop's line (the VPS then lists one key, with `command="bash ...` in the middle of its line), or changed while being copied; [step 3.3](remote-setup.md#33-the-key) has the repair for each. **Listed:** the phone offers another key or asks another user: `ssh -G xmd-vps \| grep -E "^(hostname\|user\|identityfile) "` must show the server's address, `xmd` and `id_xmd`, and the command must be `ssh xmd-vps`, not `ssh xmd@...`. |
+| `Permission denied (publickey)` from the phone | **First the command:** on the phone it is `ssh xmd-vps`, not `ssh xmd@VPS_ADDRESS`. Only the name `xmd-vps` makes SSH offer the phone's key (the `Host xmd-vps` lines of `~/.ssh/config`); given the address it offers none, even though the same command works from the laptop. **Refused with `ssh xmd-vps` too:** the server does not know the key the phone offers. Compare fingerprints: `ssh-keygen -lf ~/.ssh/authorized_keys` on the VPS as `xmd`, `ssh-keygen -lf ~/.ssh/id_xmd.pub` in Termux. **Not listed on the VPS:** the line was added as root (so to root's file), glued to the end of the laptop's line (the VPS then lists one key, with `command="bash ...` in the middle of its line), or changed while being copied; [step 3.3](remote-setup.md#33-the-key) has the repair for each. **Listed:** the phone offers another key or asks another user: `ssh -G xmd-vps \| grep -E "^(hostname\|user\|identityfile) "` must show the server's address, `xmd` and `id_xmd`. |
 | `config error: ...` as soon as `brief.sh` starts | `sources.yaml` on this machine: the message names the file or the setting. A path setting left empty (`storage:`, `digest_dir:`) means its default, `xmd.db` and `digests`. |
 | The timer's run fails with `Read-only file system` | `storage:` or `digest_dir:` in `sources.yaml` points outside the repo, the only place the unit may write. |
 | `no .../.venv/bin/python` | The virtual environment was not made on this machine: `python3 -m venv .venv && .venv/bin/pip install -e .` |

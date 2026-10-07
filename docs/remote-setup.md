@@ -265,6 +265,8 @@ ssh xmd-vps pull | tar -tf -        # lists the brief made in part 2
 ssh xmd-vps ls                      # must be refused: "allowed: run 24h|since [MINUTES] | pull [DAYS]"
 ```
 
+**On the phone the command is always `ssh xmd-vps`, never `ssh xmd@VPS_ADDRESS`.** Only the name `xmd-vps` makes SSH read the five lines of `~/.ssh/config` and offer `id_xmd`. Given the address instead, SSH has no key to offer and the server answers `Permission denied (publickey)`, although nothing is wrong with the key. `ssh xmd@VPS_ADDRESS` is the laptop's command: the laptop's key opens a shell, the phone's key never does.
+
 ### 3.4 The buttons
 
 Long-press the home screen > Widgets > **Termux:Widget**, and drop the list on the home screen.
