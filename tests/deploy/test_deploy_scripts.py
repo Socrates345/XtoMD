@@ -294,7 +294,7 @@ def test_a_run_keeps_its_connection_alive_and_a_lost_one_is_explained_not_follow
     done = _phone(repo, tmp_path, "run", "24h", XMD_BRIEF_DEST=str(dest), SSH_FAILS="1")
 
     assert done.returncode == 255
-    assert b"finished there all" in done.stderr and b"brief-vps-latest" in done.stderr
+    assert b"finished there all" in done.stderr and b"download-latest-daily-brief" in done.stderr
     assert (repo / "options.log").read_text(encoding="utf-8").split() == ["ServerAliveInterval=30", "ServerAliveCountMax=4"]
     assert (repo / "hosts.log").read_text(encoding="utf-8").split() == ["xmd-vps"]  # one call: no download tried
     assert not dest.exists()
@@ -317,3 +317,35 @@ def test_the_phone_says_how_to_ask_when_asked_for_something_else(repo, tmp_path)
     done = _phone(repo, tmp_path, "status")
     assert done.returncode == 2 and b"usage" in done.stderr
     assert not (repo / "hosts.log").exists()  # the VPS was not even called
+
+
+# --- termux/setup.sh, the home-screen buttons
+
+# the names setup.sh gave its buttons before: left in place, the widget would list them for ever
+FORMER_BUTTONS = ["brief-vps-24h", "brief-vps-10min", "brief-vps-latest", "brief-phone-24h", "brief-phone-10min"]
+
+
+def test_setup_leaves_three_buttons_that_ask_the_vps_and_clears_its_former_ones_and_no_other(repo, tmp_path):
+    home = repo.parent  # what _run gives the scripts as $HOME
+    (home / "storage" / "shared").mkdir(parents=True)  # access to the phone's files: given already
+    shortcuts = home / ".shortcuts"
+    shortcuts.mkdir()
+    for name in [*FORMER_BUTTONS, "my-own-button"]:
+        (shortcuts / name).write_text("echo mine\n", encoding="utf-8")
+    prefix = tmp_path / "usr"
+    for tool in (prefix / "bin" / "pkg", repo / ".venv" / "bin" / "pip"):  # nothing is installed for real
+        tool.parent.mkdir(parents=True, exist_ok=True)
+        tool.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        tool.chmod(0o755)
+    asked = 'printf "%s\\n" "$*" >> "$(dirname "$0")/../../asked.log"\n'  # vps.sh, saying only what it was asked
+    (repo / "deploy" / "termux" / "vps.sh").write_text(asked, encoding="utf-8")
+
+    path = f"{prefix / 'bin'}{os.pathsep}{os.environ['PATH']}"
+    done = _run(repo, "termux/setup.sh", PREFIX=str(prefix), PATH=path)
+
+    assert done.returncode == 0, done.stderr
+    buttons = ["download-latest-daily-brief", "generate-last-24h-brief", "generate-last-24h-brief-10min-read"]
+    assert sorted(p.name for p in shortcuts.iterdir()) == [*buttons, "my-own-button"]
+    for button in buttons:
+        subprocess.run(["bash", str(shortcuts / button)], check=True, timeout=60)
+    assert _asked(repo) == ["pull", "run 24h", "run 24h 10"]

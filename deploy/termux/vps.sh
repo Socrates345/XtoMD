@@ -28,7 +28,7 @@ case "${1:-}" in
         ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$host" "$@" || code=$?
         if [[ "$code" -eq 255 ]]; then  # ssh's own failure, not the brief's
             echo "the connection to the VPS failed or was lost. A brief that had started is finished there all" >&2
-            echo "the same: get it in a few minutes with brief-vps-latest (bash deploy/termux/vps.sh pull)" >&2
+            echo "the same: tap download-latest-daily-brief in a few minutes (bash deploy/termux/vps.sh pull)" >&2
             exit 255
         fi
         # a brief with failed chunks is still written (exit 1): download whatever there is either way

@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # On the phone (Termux): make the brief on the phone itself, no VPS involved. Only the model is elsewhere
-# (.env at the repo root names it). The home-screen shortcuts setup.sh installs call this; so can you:
+# (.env at the repo root names it). No home-screen button runs this: it is a command to type:
 #
 #   bash deploy/termux/phone.sh 24h         everything published in the last 24 hours
 #   bash deploy/termux/phone.sh 24h 10      ... fitted to a 10-minute read

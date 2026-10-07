@@ -5,7 +5,7 @@ Description=XtoMD daily brief, once a day
 
 [Timer]
 # The hour, on the clock named at the end of the line: change it here, then `systemctl daemon-reload`.
-OnCalendar=*-*-* 17:07:00 Europe/Paris
+OnCalendar=*-*-* 18:00:00 Europe/Paris
 # A run missed while the server was off is made when it comes back.
 Persistent=true
 

@@ -8,7 +8,7 @@ Do the parts in order. Each ends with a **Check**: don't go on until it passes. 
 | --- | --- | --- |
 | [0. Laptop](#0-on-the-laptop-first) | Laptop | The code pushed, ready to be cloned |
 | [1. Venice](#1-venice) | Browser | An API key for the hosted model |
-| [2. VPS](#2-the-vps) | The server | A brief every day at 17:07 |
+| [2. VPS](#2-the-vps) | The server | A brief every day at 18:00 |
 | [3. Phone](#3-the-phone) | Termux on the Pixel | Buttons to fetch a brief, or ask for one |
 | [4. Phone alone](#4-the-phone-alone-optional) | Termux on the Pixel | A brief with no VPS at all |
 
@@ -172,7 +172,7 @@ systemctl daemon-reload
 systemctl enable --now xmd-brief.timer
 ```
 
-The timer makes a `24h` brief every day at 17:07 Europe/Paris, whatever the server's own clock is set to. To change the hour, edit `OnCalendar=` in `/etc/systemd/system/xmd-brief.timer`, then `systemctl daemon-reload`.
+The timer makes a `24h` brief every day at 18:00 Europe/Paris, whatever the server's own clock is set to. To change the hour, edit `OnCalendar=` in `/etc/systemd/system/xmd-brief.timer`, then `systemctl daemon-reload`.
 
 Now run it once the way the timer will, to prove it works inside its sandbox:
 

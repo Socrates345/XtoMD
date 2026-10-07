@@ -9,7 +9,7 @@ Until now the brief existed only when the laptop made it, with a local model in 
 | | Where the pipeline runs | When | For |
 | --- | --- | --- | --- |
 | **VPS** | A small rented server, always on | Every day on a timer, and whenever the phone asks | The routine |
-| **Phone alone** | Termux on the Android phone | When you tap a button | A fallback: no server needed |
+| **Phone alone** | Termux on the Android phone | When you run the command | A fallback: no server needed |
 
 Neither has a GPU, so both summarize with a hosted model: Venice's `qwen3-5-9b`, the same Qwen 3.5 9B the prompts were tuned on. That is the one thing that leaves your machines that did not before (see [Privacy and security](#privacy-and-security)).
 
@@ -20,10 +20,10 @@ The laptop is unchanged. Its commands, its LM Studio setup and its brief are wha
 ```text
 VPS, always on                                      Phone (Termux)
 ----------------------------------------------      ---------------------------------
-xmd-brief.timer    every day at 17:07
+xmd-brief.timer    every day at 18:00
       |
       v
-deploy/brief.sh  <---  deploy/vps/ssh-entry.sh  <--- SSH ---  button: brief-vps-24h
+deploy/brief.sh  <---  deploy/vps/ssh-entry.sh  <--- SSH ---  button: generate-last-24h-brief
       |                        |
       v                        +--- briefs (tar) --- SSH --->  Documents/xmd-briefs
 scripts/make_brief.py                                                |
@@ -56,7 +56,7 @@ scripts/make_brief.py                                                |
 | 2 | Bad arguments, or a model name the server does not have |
 | 75 | Another brief was being made on this machine |
 
-**A brief asked for from the phone survives a lost connection.** A brief takes minutes, and in that time a phone changes network or goes to sleep. So `ssh-entry.sh` starts `brief.sh` in a session of its own, writing to a file, and only shows the phone that file as it grows. If the connection drops, the showing stops and the VPS finishes the brief anyway. The phone then says `the connection to the VPS failed or was lost` (exit 255) and downloads nothing: tap `brief-vps-latest` a few minutes later. While the run is connected, the phone also sends a keep-alive every 30 seconds, so a quiet stretch does not make a mobile network drop it.
+**A brief asked for from the phone survives a lost connection.** A brief takes minutes, and in that time a phone changes network or goes to sleep. So `ssh-entry.sh` starts `brief.sh` in a session of its own, writing to a file, and only shows the phone that file as it grows. If the connection drops, the showing stops and the VPS finishes the brief anyway. The phone then says `the connection to the VPS failed or was lost` (exit 255) and downloads nothing: tap `download-latest-daily-brief` a few minutes later. While the run is connected, the phone also sends a keep-alive every 30 seconds, so a quiet stretch does not make a mobile network drop it.
 
 ### State
 
@@ -150,15 +150,20 @@ A download never replaces a brief already in the folder.
 
 By hand, the phone reaches the VPS as `ssh xmd-vps` (`ssh xmd-vps pull | tar -tf -` lists what there is to download), never as `ssh xmd@VPS_ADDRESS`: that form skips the phone's key and is refused with `Permission denied (publickey)`. It is the laptop's command.
 
+**On the phone, alone** (no VPS, no button):
+
+```bash
+bash deploy/termux/phone.sh 24h          # made on the phone itself, then copied to the briefs folder
+bash deploy/termux/phone.sh 24h 10       # ... fitted to a 10-minute read
+```
+
 **The buttons** (Termux:Widget):
 
 | Button | Runs |
 | --- | --- |
-| `brief-vps-latest` | `vps.sh pull`: the timer's daily brief |
-| `brief-vps-24h` | `vps.sh run 24h` |
-| `brief-vps-10min` | `vps.sh run 24h 10` |
-| `brief-phone-24h` | `phone.sh 24h`: made on the phone alone |
-| `brief-phone-10min` | `phone.sh 24h 10` |
+| `download-latest-daily-brief` | `vps.sh pull`: the timer's daily brief |
+| `generate-last-24h-brief` | `vps.sh run 24h` |
+| `generate-last-24h-brief-10min-read` | `vps.sh run 24h 10` |
 
 **On the VPS, as root:**
 
@@ -264,8 +269,8 @@ systemctl daemon-reload
 | `LM Studio's server is not answering at http://127.0.0.1:1234/v1` on the VPS or phone | `.env` is missing or has no `XMD_LLM_BASE_URL`, so the scripts fell back to the laptop's default. |
 | Smoke test: `FAIL` on line 2 or 3 with `HTTP 400`, or `does not enforce maxItems` | Venice does not take the item bounds: see [Limits](#limits). |
 | Smoke test: `cut off by the 2300-token cap after N item(s) of at most 20` | The model's items are longer than a real chunk has room for (100 tokens each). Run it again: if it repeats, expect some chunks under "Not summarized" in a brief. |
-| `a brief is already being made on this machine` (exit 75) | The timer's run and yours overlapped, or you asked again after a lost connection while the first brief was still being finished. Wait a few minutes, then `brief-vps-latest`. |
-| `the connection to the VPS failed or was lost` on the phone | No network, or it dropped during the run. A brief that had started is finished on the VPS all the same: `brief-vps-latest` in a few minutes. If it never arrives, the run had not started: ask again. |
+| `a brief is already being made on this machine` (exit 75) | The timer's run and yours overlapped, or you asked again after a lost connection while the first brief was still being finished. Wait a few minutes, then `download-latest-daily-brief`. |
+| `the connection to the VPS failed or was lost` on the phone | No network, or it dropped during the run. A brief that had started is finished on the VPS all the same: `download-latest-daily-brief` in a few minutes. If it never arrives, the run had not started: ask again. |
 | Nothing new for a while after `[2/5] fetch` | The fetch is the long step: the X backend limits how fast accounts are read. It prints `fetching sources: N/TOTAL` every 30 seconds. |
 | `allowed: run 24h\|since [MINUTES] \| pull [DAYS]` | The VPS refused a request the phone's key may not make. That is the limit working. |
 | `Permission denied (publickey)` from the phone | **First the command:** on the phone it is `ssh xmd-vps`, not `ssh xmd@VPS_ADDRESS`. Only the name `xmd-vps` makes SSH offer the phone's key (the `Host xmd-vps` lines of `~/.ssh/config`); given the address it offers none, even though the same command works from the laptop. **Refused with `ssh xmd-vps` too:** the server does not know the key the phone offers. Compare fingerprints: `ssh-keygen -lf ~/.ssh/authorized_keys` on the VPS as `xmd`, `ssh-keygen -lf ~/.ssh/id_xmd.pub` in Termux. **Not listed on the VPS:** the line was added as root (so to root's file), glued to the end of the laptop's line (the VPS then lists one key, with `command="bash ...` in the middle of its line), or changed while being copied; [step 3.3](remote-setup.md#33-the-key) has the repair for each. **Listed:** the phone offers another key or asks another user: `ssh -G xmd-vps \| grep -E "^(hostname\|user\|identityfile) "` must show the server's address, `xmd` and `id_xmd`. |

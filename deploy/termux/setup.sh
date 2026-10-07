@@ -4,7 +4,7 @@
 #   bash deploy/termux/setup.sh
 #
 # Installs what the pipeline needs, makes the virtual environment, asks for access to the phone's files, and
-# puts five buttons in Termux:Widget's list. Safe to run again, after a `git pull` for instance.
+# puts three buttons in Termux:Widget's list. Safe to run again, after a `git pull` for instance.
 # docs/remote-setup.md has the steps around it (.env, the SSH key, the widget).
 set -euo pipefail
 
@@ -59,11 +59,14 @@ shortcut() {  # shortcut NAME SCRIPT [ARGUMENT...]: one button in Termux:Widget'
     echo "  $name"
 }
 
-shortcut brief-vps-24h "$repo/deploy/termux/vps.sh" run 24h
-shortcut brief-vps-10min "$repo/deploy/termux/vps.sh" run 24h 10
-shortcut brief-vps-latest "$repo/deploy/termux/vps.sh" pull
-shortcut brief-phone-24h "$repo/deploy/termux/phone.sh" 24h
-shortcut brief-phone-10min "$repo/deploy/termux/phone.sh" 24h 10
+# the buttons an earlier version of this script made, under the names they had then: the list would keep them
+for old in brief-vps-24h brief-vps-10min brief-vps-latest brief-phone-24h brief-phone-10min; do
+    rm -f "$shortcuts/$old"
+done
+
+shortcut download-latest-daily-brief "$repo/deploy/termux/vps.sh" pull
+shortcut generate-last-24h-brief "$repo/deploy/termux/vps.sh" run 24h
+shortcut generate-last-24h-brief-10min-read "$repo/deploy/termux/vps.sh" run 24h 10
 
 if [[ ! -f .env ]]; then
     cp deploy/env.example .env
