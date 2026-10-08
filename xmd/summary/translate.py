@@ -19,7 +19,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 from .engine import Completion, EngineError
 from .prompt import load_detect_prompt, load_translate_prompt
@@ -139,11 +139,9 @@ def translate_one(model: Model, text: str, system: str) -> str:
 
 def translate_texts(
     model: Model, texts: list[str], language: Language, cache: dict[str, str] | None = None,
-    on_result: Callable[[str], None] | None = None,
 ) -> Translated:
     """The translations of those `texts` that are in a language `language` does not accept. `cache` (updated
-    in place) holds earlier answers: language tags and translations, keyed by prompt and text. `on_result` gets a
-    one-line progress note per translation made."""
+    in place) holds earlier answers: language tags and translations, keyed by prompt and text."""
     cache = {} if cache is None else cache
     done = Translated()
     texts = [t for t in dict.fromkeys(texts) if t and worth_checking(t)]
@@ -158,8 +156,7 @@ def translate_texts(
             done.too_long += 1
             continue
         key = f"{language.translate_to}:" + _key(system, text)
-        cached = key in cache
-        if cached:
+        if key in cache:
             translation = cache[key]
         else:
             try:
@@ -173,8 +170,6 @@ def translate_texts(
             cache[key] = translation
         found = support([{"headline": "", "detail": translation, "ids": [0]}], {0: text}).flagged
         done.translations[text] = Translation(lang, translation, found[0][1] if found else ())
-        if on_result and not cached:
-            on_result(f"translated a {language.name(lang)} post ({len(translation.split())} words)")
     return done
 
 

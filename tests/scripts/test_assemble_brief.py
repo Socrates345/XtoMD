@@ -8,7 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))  # the 
 
 import assemble_brief  # noqa: E402
 import run_system  # noqa: E402
+from xmd.core.config import Language  # noqa: E402
 from xmd.summary.budget import Sizing  # noqa: E402
+from xmd.summary.translate import Translated, Translation  # noqa: E402
+
+EN_FR = Language(("en", "fr"), "en")
 
 
 def test_a_brief_never_replaces_an_earlier_one(tmp_path):
@@ -40,6 +44,19 @@ def test_time_and_compression_are_one_or_the_other(capsys):
         run_system.time_budget("ten")
     with pytest.raises(argparse.ArgumentTypeError, match="not JSON"):
         run_system.extra_body("{thinking: off}")
+
+
+def test_the_translations_are_reported_in_one_line_with_the_number_really_translated():
+    german = {f"Beitrag {k}": Translation("de", f"post {k}") for k in range(9)}
+    done = Translated({**german, "今天": Translation("zh", "today"), "hoje": Translation("pt", "today")}, 118, 11)
+    assert assemble_brief._translation_line(done, EN_FR) == (
+        "translations: 11 posts translated into en (9 German, 1 Chinese, 1 Portuguese)")
+    assert assemble_brief._translation_line(Translated(checked=118), EN_FR) == "translations: none needed"
+    left = Translated({"hoje": Translation("pt", "today")}, 5, 3, ["a German post: HTTP 500"], too_long=1)
+    assert assemble_brief._translation_line(left, EN_FR) == (
+        "translations: 1 post translated into en (1 Portuguese), 1 too long to translate")
+    assert assemble_brief._translation_line(Translated(failed=["language tags for 25 posts: HTTP 500"]), EN_FR) == (
+        "translations: 0 posts translated into en")  # not "none needed": nobody knows, and the failure is printed under it
 
 
 # the brief without its summaries, uncut and at its barest: 2 minutes of priority tweets, 17 of image tweets

@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,7 +40,7 @@ from xmd.summary.brief import (  # noqa: E402
     brief_stamp, build_brief, digest_items, load_item_ids, load_run, summary_items, window_kind,
 )
 from xmd.summary.chunk import parse_export  # noqa: E402
-from xmd.core.config import load_config  # noqa: E402
+from xmd.core.config import Language, load_config  # noqa: E402
 from xmd.summary.engine import API_KEY_ENV_VAR, Engine  # noqa: E402
 from xmd.summary.prompt import load_section_prompt  # noqa: E402
 from xmd.summary.runner import compression_label  # noqa: E402
@@ -72,6 +73,17 @@ def _engine(args: argparse.Namespace, run_engine: dict, timeout: float = 120) ->
     """The model for the calls made here: the run's own, unless --model / --base-url say otherwise."""
     return Engine(args.model or run_engine["model"], args.base_url or run_engine["base_url"], args.api_key, timeout,
                   run_engine.get("no_think", False), run_engine.get("extra_body"))
+
+
+def _translation_line(done: translate.Translated, language: Language) -> str:
+    """The translation step in one line: how many posts the brief shows translated, and from which languages."""
+    if not (done.foreign or done.failed):
+        return "translations: none needed"
+    n = len(done.translations)
+    by_language = Counter(language.name(t.lang) for t in done.translations.values())
+    return (f"translations: {n} {'post' if n == 1 else 'posts'} translated into {language.translate_to}"
+            + (f" ({', '.join(f'{k} {name}' for name, k in by_language.most_common())})" if by_language else "")
+            + (f", {done.too_long} too long to translate" if done.too_long else ""))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -188,15 +200,11 @@ def main(argv: list[str] | None = None) -> int:
         build(lambda text: shown.append(text), cuts)
         cache_path = run / "translations.json"
         cache = {} if args.refresh else translate.load_cache(cache_path)
-        print(f"languages: {len(set(shown))} tweets shown as posted, checking which are not in "
-              f"{', '.join(config.language.accepted)}")
         with _engine(args, engine, timeout=300) as model:  # a long post's translation takes a while
-            done = translate.translate_texts(model, shown, config.language, cache,
-                                             on_result=lambda note: print(f"  {note}"))
+            done = translate.translate_texts(model, shown, config.language, cache)
         translate.save_cache(cache_path, cache)
         translations = done.translations
-        print(f"  {done.foreign} in another language, {len(translations)} translated into {config.language.translate_to}"
-              + (f", {done.too_long} too long to translate" if done.too_long else ""))
+        print(_translation_line(done, config.language))
         for failure in done.failed:
             print(f"  not translated: {failure}")
         print()
