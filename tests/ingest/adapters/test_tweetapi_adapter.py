@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from xmd.ingest.adapters import MAX_PAGES, UNLIMITED
+from xmd.ingest.adapters import MAX_PAGES, UNLIMITED, HandleNotFound
 from xmd.ingest.adapters import tweetapi as tweetapi_adapter
 from xmd.core.config import Source
 
@@ -433,3 +433,11 @@ def test_fetch_paces_every_http_call(monkeypatch):
     assert configured == [10]
     assert len(waits) == 2  # resolve_user_id + the one tweets page
     assert [i.title for i in items] == ["hello from tweetapi.com"]
+
+
+def test_a_handle_the_backend_knows_no_account_for_is_reported_as_not_found(monkeypatch):
+    """A renamed, suspended or deleted account: the lookup answers, with no user in it. Unlike a failure to answer,
+    fetching again changes nothing, so it is told apart (the digest's fetch report lists it first)."""
+    _fake_calls(monkeypatch, [{"data": None}])
+    with pytest.raises(HandleNotFound, match="could not resolve @gone to a user id"):
+        tweetapi_adapter.fetch(Source(name="@gone", type="tweetapi", handle="gone"), "key")

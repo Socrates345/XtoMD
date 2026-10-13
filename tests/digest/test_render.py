@@ -2,11 +2,12 @@ import re
 from datetime import datetime, timezone
 from html import unescape
 from urllib.parse import unquote
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from xmd.core.models import FeedItem
-from xmd.digest.render import build_markdown, build_quick
+from xmd.core.models import FeedItem, FetchReport
+from xmd.digest.render import build_markdown, build_quick, fetch_note, fetch_report_lines
 
 NOW = datetime(2026, 7, 8, 8, 0)
 
@@ -519,3 +520,41 @@ def test_quick_digest_contents_links_resolve():
 
 def test_quick_digest_empty():
     assert "Nothing new" in build_quick([], NOW)
+
+
+# --- the fetch report: what a troubled fetch adds at the end of a page
+
+FETCHED_AT = datetime(2026, 10, 13, 16, 2, tzinfo=timezone.utc)
+PARIS_EVENING = datetime(2026, 10, 13, 18, 30, tzinfo=ZoneInfo("Europe/Paris"))
+
+
+def test_the_fetch_report_lists_the_missing_accounts_first_then_the_failures_then_the_warnings():
+    report = FetchReport(
+        FETCHED_AT, 212,
+        not_found=(("@old_name (Old Name)", "tweetapi.com: could not resolve @old_name to a user id"),),
+        failed=(("@bob", "Server error '520 <none>'"),),
+        warnings=("source @carol: cut at <100> items",),
+    )
+    md = "\n".join(fetch_report_lines(report, PARIS_EVENING))
+
+    assert "*Fetch of 2026-10-13 18:02: 2 of 212 sources not fetched.*" in md  # on the page's clock
+    order = ["## Fetch report", "Account not found", "@old\\_name (Old Name)", "Failed this time", "@bob", "**Warnings**"]
+    assert [md.index(part) for part in order] == sorted(md.index(part) for part in order)
+    assert "- @bob: Server error '520 &lt;none&gt;'" in md  # reads as <none>, and is not a tag
+    assert "- source @carol: cut at &lt;100&gt; items" in md
+    assert fetch_note(report) == "⚠ [2 sources not fetched, 1 fetch warning](#Fetch%20report)"
+    target = unquote(re.search(r"\(#(\S+?)\)", fetch_note(report)).group(1))
+    assert f"## {target}" in md and f'<a id="{target}"></a>' in md  # the note's link lands on the section, both ways
+
+
+def test_a_fetch_without_trouble_has_no_report_and_no_note():
+    for report in (None, FetchReport(FETCHED_AT, 212)):
+        assert fetch_report_lines(report, PARIS_EVENING) == [] and fetch_note(report) == ""
+
+
+def test_warnings_alone_are_reported_without_saying_a_source_was_missed():
+    report = FetchReport(FETCHED_AT, 3, warnings=("@carol stopped after 25 pages",))
+    md = "\n".join(fetch_report_lines(report, PARIS_EVENING))
+    assert "*Fetch of 2026-10-13 18:02: 3 sources fetched.*" in md
+    assert "not found" not in md and "Failed this time" not in md
+    assert fetch_note(report) == "⚠ [1 fetch warning](#Fetch%20report)"

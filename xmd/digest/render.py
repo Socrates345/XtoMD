@@ -49,7 +49,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from ..core.config import LANGUAGE_NAMES
-from ..core.models import URL, FeedItem
+from ..core.models import URL, FeedItem, FetchReport
 from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
 from .trending import DEFAULT_SIMILARITY, Story, find_stories
 
@@ -57,6 +57,7 @@ PLATFORM_LABELS = {"x": "X"}
 DEFAULT_SNIPPET_CHARS = 140
 DEFAULT_RETWEET_CHARS = 100
 DEFAULT_MEDIA_CHARS = 500
+FETCH_REPORT = "Fetch report"  # the heading of the section a troubled fetch adds at the end of a page
 _URL = re.compile(r"https?://[^\s<>\"]+")
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]])")
 
@@ -336,6 +337,42 @@ def _render_items(
     return lines
 
 
+def fetch_note(report: FetchReport | None) -> str:
+    """The fetch report in a few words, linked to it, for the top of a page: the report itself is at the very end,
+    where a reader may never get. "" when there is nothing to report."""
+    if report is None or report.clean:
+        return ""
+    missed = len(report.not_found) + len(report.failed)
+    said = ([f"{_count(missed, 'source')} not fetched"] if missed else []) + (
+        [_count(len(report.warnings), "fetch warning")] if report.warnings else [])
+    return f"⚠ [{', '.join(said)}](#{_fragment(FETCH_REPORT)})"
+
+
+def fetch_report_lines(report: FetchReport | None, now: datetime) -> list[str]:
+    """The section that ends a digest or a brief whose fetch had trouble, so that nobody has to read the log: the
+    accounts the backend no longer knows first (only the user can put those right), then the sources that failed
+    for another reason, then what the fetch warned about. [] when it had none, or `report` is None. The fetch's
+    time is on `now`'s clock, as the rest of the page. Labels and error messages are escaped like a tweet's words:
+    the `<none>` of `Server error '520 <none>'` must reach the reader, and no tag may reach the page."""
+    if report is None or report.clean:
+        return []
+    missed = len(report.not_found) + len(report.failed)
+    when = report.at.astimezone(now.tzinfo).strftime("%Y-%m-%d %H:%M")
+    asked = _count(report.sources, "source")
+    lines = ["---", "", f'<a id="{html.escape(FETCH_REPORT)}"></a>', f"## {FETCH_REPORT}", "",
+             f"*Fetch of {when}: " + (f"{missed} of {asked} not fetched" if missed else f"{asked} fetched") + ".*", ""]
+    if report.not_found:
+        lines += ["**Account not found: renamed, suspended or deleted? Correct or remove its handle in `x.md`.**", ""]
+        lines += [f"- {_plain(label)}: {_plain(why)}" for label, why in report.not_found] + [""]
+    if report.failed:
+        lines += ["**Failed this time: the next fetch tries again.**", ""]
+        lines += [f"- {_plain(label)}: {_plain(why)}" for label, why in report.failed] + [""]
+    if report.warnings:
+        lines += ["**Warnings**", ""]
+        lines += [f"- {_plain(warning)}" for warning in report.warnings] + [""]
+    return lines
+
+
 def build_markdown(
     items: list[FeedItem],
     now: datetime,
@@ -343,6 +380,7 @@ def build_markdown(
     priority_sources: frozenset[str] = frozenset(),
     similarity: float = DEFAULT_SIMILARITY,
     snippet_chars: int = DEFAULT_SNIPPET_CHARS,
+    fetch_report: FetchReport | None = None,
 ) -> str:
     suffix = f" ({label})" if label else ""
     lines = [f"# X to MD — {now.strftime('%Y-%m-%d %H:%M')}{suffix}", ""]
@@ -355,6 +393,7 @@ def build_markdown(
     total_sources = len({i.source for i in items})
     lines.append(f"**{_count(len(items), 'item')} · {_count(total_sources, 'source')}**")
     lines.append("")
+    lines += [fetch_note(fetch_report), ""] if fetch_note(fetch_report) else []
     # a jump-link per section only pays for itself once there's more than
     # one to jump between
     if len(sections) > 1:
@@ -385,6 +424,7 @@ def build_markdown(
             lines += _render_items(retweets, priority_sources, as_html=True)
             lines.append("</details>")
             lines.append("")
+    lines += fetch_report_lines(fetch_report, now)
     return "\n".join(lines)
 
 
@@ -423,6 +463,7 @@ def build_quick(
     snippet_chars: int = DEFAULT_SNIPPET_CHARS,
     retweet_chars: int = DEFAULT_RETWEET_CHARS,
     media_chars: int = DEFAULT_MEDIA_CHARS,
+    fetch_report: FetchReport | None = None,
 ) -> str:
     """The scan layer of a digest (see the module docstring). `full_name` is
     the filename of the full digest written next to it, linked from the top
@@ -460,6 +501,7 @@ def build_quick(
         (RECAP, f"{counts[RECAP]} in recap groups"),
     ]
     lines += [stats, " · ".join(text for tier, text in mix if counts[tier]), ""]
+    lines += [fetch_note(fetch_report), ""] if fetch_note(fetch_report) else []
     if len(sections) > 1:
         if general:
             lines.append(f"- [Trending](#Trending) — {_stories(len(general))}")
@@ -507,4 +549,5 @@ def build_quick(
                 lines += [f"**Repeated in this group — {len(recap_stories[key])}**", ""]
                 lines += _story_lines(recap_stories[key], priority_sources, snippet_chars)
                 lines.append("")
+    lines += fetch_report_lines(fetch_report, now)
     return "\n".join(lines)

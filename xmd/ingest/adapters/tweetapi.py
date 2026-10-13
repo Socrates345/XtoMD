@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from . import page_limit
+from . import HandleNotFound, page_limit
 from ...core.config import Source
 from ...core.models import FeedItem, is_echo
 
@@ -207,7 +207,7 @@ def _resolve_user_id(handle: str, api_key: str, timeout: float) -> str:
     resp = _get(f"{BASE_URL}/user/by-username", {"username": handle}, api_key, timeout)
     user_id = (resp.get("data") or {}).get("id")
     if not user_id:
-        raise RuntimeError(f"tweetapi.com: could not resolve @{handle} to a user id")
+        raise HandleNotFound(f"tweetapi.com: could not resolve @{handle} to a user id")
     return user_id
 
 

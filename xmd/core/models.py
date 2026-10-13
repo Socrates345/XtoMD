@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -103,3 +104,44 @@ class FeedItem:
         """Words a reader meets: display_body() minus URLs. The one measure the
         reading-time figures and the brief's length targets are stated in."""
         return len(URL.sub(" ", html.unescape(self.display_body())).split())
+
+
+@dataclass(frozen=True)
+class FetchReport:
+    """What one fetch could not do, kept with the digest made from it: the brief of a timer's run is all its reader
+    sees, and nobody should have to read a log to learn that an account was not fetched. A label names a source as
+    its user does: `@handle`, or `@handle (Name)`."""
+
+    at: datetime  # when the fetch ended (aware)
+    sources: int  # how many it asked
+    # (label, why): the backend knows no such account: renamed, suspended or deleted. Only the user can fix it
+    not_found: tuple[tuple[str, str], ...] = ()
+    failed: tuple[tuple[str, str], ...] = ()  # (label, why): any other failure, which the next fetch may not meet
+    warnings: tuple[str, ...] = ()  # what else the fetch warned about: an account whose older tweets it left out
+
+    @property
+    def clean(self) -> bool:
+        """Nothing to tell: every source answered and nothing was warned about."""
+        return not (self.not_found or self.failed or self.warnings)
+
+    def to_json(self) -> str:
+        return json.dumps({
+            "at": self.at.isoformat(), "sources": self.sources,
+            "not_found": [list(e) for e in self.not_found], "failed": [list(e) for e in self.failed],
+            "warnings": list(self.warnings),
+        }, ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, text: str) -> FetchReport | None:
+        """The report `to_json` wrote, or None for anything else (nothing, a file cut short): a digest is not lost
+        over its report."""
+        try:
+            raw = json.loads(text)
+            return cls(
+                datetime.fromisoformat(raw["at"]), int(raw["sources"]),
+                tuple((str(label), str(why)) for label, why in raw["not_found"]),
+                tuple((str(label), str(why)) for label, why in raw["failed"]),
+                tuple(str(w) for w in raw["warnings"]),
+            )
+        except (ValueError, KeyError, TypeError):
+            return None

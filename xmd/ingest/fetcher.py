@@ -20,7 +20,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .adapters import UNLIMITED
+import httpx
+
+from .adapters import UNLIMITED, HandleNotFound
 from .adapters import tweetapi as tweetapi_adapter
 from .adapters import twitterapi as twitterapi_adapter
 from ..core.config import Config, Source
@@ -58,6 +60,10 @@ class FetchResult:
     # (source, why), in config order: the sources whose fetch raised. A source
     # that answered with no tweets is not in here.
     failed: list[tuple[Source, str]] = field(default_factory=list)
+    # the names of the failed sources whose account the backend says it does not know (see `_not_found`)
+    not_found: frozenset[str] = frozenset()
+    # what the fetch warned about apart from those failures (a handle whose older tweets were left out), in order
+    warnings: list[str] = field(default_factory=list)
 
 
 def _reason(exc: Exception) -> str:
@@ -65,6 +71,26 @@ def _reason(exc: Exception) -> str:
     lines, and some exceptions (a timeout) carry no message at all."""
     lines = str(exc).splitlines()
     return lines[0] if lines and lines[0] else type(exc).__name__
+
+
+def _not_found(exc: Exception) -> bool:
+    """Whether the backend said it knows no such account (renamed, suspended, deleted) rather than failed to
+    answer: the one failure another fetch will not get past."""
+    return isinstance(exc, HandleNotFound) or (
+        isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404)
+
+
+class _Warnings(logging.Handler):
+    """Keeps what a fetch warns about, for the report its digest carries: on a timer nobody reads the log. A failed
+    source's own warning is left out, `FetchResult.failed` names it."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not getattr(record, "failed_source", False):
+            self.lines.append(record.getMessage())
 
 
 async def fetch_all(
@@ -87,8 +113,9 @@ async def fetch_all(
     )
     max_items, ceiling_is_default = _fetch_ceiling(config, max_age_hours)
 
-    async def one(source) -> tuple[list[FeedItem], str]:
-        """(items, "") on success, ([], why) when the source's fetch raised."""
+    async def one(source) -> tuple[list[FeedItem], str, bool]:
+        """(items, "", False) on success, ([], why, whether the account was not found) when the source's fetch
+        raised."""
         nonlocal done
         t0 = time.perf_counter()
         try:
@@ -115,20 +142,27 @@ async def fetch_all(
                     "were not fetched (fetch.max_per_source: set a number to choose the ceiling yourself)",
                     source.name, max_items,
                 )
-            return batch, ""
+            return batch, "", False
         except Exception as exc:
             why = _reason(exc)
             log.warning(
                 "source %r failed after %.1fs: %s",
                 source.name, time.perf_counter() - t0, why,
+                extra={"failed_source": True},
             )
-            return [], why
+            return [], why, _not_found(exc)
         finally:
             done += 1
             if progress:
                 progress(done, total)
 
-    results = await asyncio.gather(*(one(s) for s in config.sources))
-    items = [item for batch, _ in results for item in batch]
-    failed = [(s, why) for s, (_, why) in zip(config.sources, results) if why]
-    return FetchResult(apply_filters(items, config), failed)
+    heard = _Warnings()
+    log.addHandler(heard)
+    try:
+        results = await asyncio.gather(*(one(s) for s in config.sources))
+    finally:
+        log.removeHandler(heard)
+    items = [item for batch, _, _ in results for item in batch]
+    failed = [(s, why) for s, (_, why, _) in zip(config.sources, results) if why]
+    not_found = frozenset(s.name for s, (_, _, gone) in zip(config.sources, results) if gone)
+    return FetchResult(apply_filters(items, config), failed, not_found, heard.lines)

@@ -33,12 +33,13 @@ from pathlib import Path
 
 from .chunk import LEVEL_ORDER
 from ..core.config import LANGUAGE_NAMES
-from ..core.models import URL, FeedItem
+from ..core.models import URL, FeedItem, FetchReport
 from ..core.store import Store
 from ..digest.render import (
     DEFAULT_MEDIA_CHARS, DEFAULT_RETWEET_CHARS, DEFAULT_SNIPPET_CHARS, Translated, _count, _fragment,
     _grouped_chronological, _inline, _line_text, _md, _not_in_original, _original_line, _post_line, _retweet_line,
-    _stories, _story_lines, _trending_block, body_md, section_key, section_key_for, section_label, sectioned,
+    _stories, _story_lines, _trending_block, body_md, fetch_note, fetch_report_lines, section_key, section_key_for,
+    section_label, sectioned,
 )
 from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
 from .topics import Topic
@@ -373,6 +374,7 @@ def build_brief(
     summaries: dict[str, str] | None = None,
     translated: Translated | None = None,
     cuts: Cuts | None = None,
+    fetch_report: FetchReport | None = None,
 ) -> Brief:
     """The brief for the window's `items`, from a run's chunk `records` (see load_run). `mapping`, `post_text`
     and `repeated` come from the frozen export the run read; `levels` are the group levels the run used.
@@ -526,6 +528,9 @@ def build_brief(
         notes.append(f"{_count(len(loose), 'post')} without a summary (chunk failed or not run)")
     if notes:
         lines += ["---", "", "*" + "; ".join(notes) + ".*", ""]
+    # what the fetch could not do (accounts not found, sources that failed): the brief is all a reader away from
+    # the machine sees of the run, so it ends with it and its first line says it is there
+    lines += fetch_report_lines(fetch_report, now)
 
     text = "\n".join(lines)
     total_words, total_images = measure(text)
@@ -534,7 +539,8 @@ def build_brief(
     diagonal = reading_minutes(total_words, total_images, WPM_DIAGONAL)
     yours = pace_minutes(content_lines, total_images)
     lines[estimate_at] = (f"**~{max(1, round(yours))} min read**" + _fitted_note(cuts, items, tiers)
-                          + (f" · [full digest]({full_name})" if full_name else ""))
+                          + (f" · [full digest]({full_name})" if full_name else "")
+                          + (f" · {fetch_note(fetch_report)}" if fetch_note(fetch_report) else ""))
     if model_line:  # provenance for whoever debugs it, invisible when reading
         lines.append(f"<!-- {model_line} -->")
     return Brief("\n".join(lines) + "\n", {

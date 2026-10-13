@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -13,14 +14,15 @@ from typing import Callable
 from . import __version__
 from .core.config import Config, Source, load_config
 from .digest.export import build_export
-from .ingest.fetcher import fetch_all
-from .core.models import FeedItem
+from .ingest.fetcher import FetchResult, fetch_all
+from .core.models import FeedItem, FetchReport
 from .digest.render import build_markdown, build_quick
 from .core.store import Store
 
 EXPORT_DIRNAME = ".export"  # dot-dir under digest_dir: invisible to Obsidian
 DEFAULT_LOOP_SECONDS = 900  # 15 min
 SINCE_RUN_MAX_HOURS = 168  # 7 days -- AFK-gap cap, so a long absence can't blow up API cost
+_ASKED_URL = re.compile(r" for url '[^']*'")  # httpx names the URL in its errors: of no use in a digest
 PROGRESS_BAR_WIDTH = 30
 
 
@@ -77,8 +79,24 @@ def _report_failures(failed: list[tuple[Source, str]]) -> None:
         return
     print(f"{len(failed)} source(s) failed to fetch (if an account was renamed, update its handle in x.md):")
     for source, why in failed:
-        label = f"@{source.handle}" if source.name == f"@{source.handle}" else f"@{source.handle} ({source.name})"
-        print(f"  {label}: {why}")
+        print(f"  {_label(source)}: {why}")
+
+
+def _label(source: Source) -> str:
+    """A source as its user names it: the handle, and the display name when x.md gives one."""
+    return f"@{source.handle}" if source.name == f"@{source.handle}" else f"@{source.handle} ({source.name})"
+
+
+def _fetch_report(result: FetchResult, sources: int, at: datetime) -> FetchReport:
+    """What the digest made from this fetch says about it (see FetchReport): the same failures `_report_failures`
+    prints, the accounts the backend does not know apart from the rest, and the fetch's warnings."""
+    entries = [(s.name in result.not_found, (_label(s), _ASKED_URL.sub("", why))) for s, why in result.failed]
+    return FetchReport(
+        at, sources,
+        not_found=tuple(entry for gone, entry in entries if gone),
+        failed=tuple(entry for gone, entry in entries if not gone),
+        warnings=tuple(result.warnings),
+    )
 
 
 async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] | None = None) -> int:
@@ -103,7 +121,10 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
     store = Store(config.storage)
     try:
         new = store.add_items(result.items)
-        store.set_meta("last_run_at", datetime.now(timezone.utc).isoformat())
+        now = datetime.now(timezone.utc)
+        store.set_meta("last_run_at", now.isoformat())
+        # the next digest carries it, into the brief too: a timer's run has no one reading its log
+        store.set_meta("last_fetch_report", _fetch_report(result, len(config.sources), now).to_json())
     finally:
         store.close()
     _report_failures(result.failed)
@@ -139,6 +160,7 @@ def _digest(config: Config, window: str, full: bool = False, quick: bool = False
             )
             items = store.recent_by_fetch(since)
         store.flag_after_silence(items)
+        fetch_report = FetchReport.from_json(store.get_meta("last_fetch_report") or "")
     finally:
         store.close()
 
@@ -146,7 +168,7 @@ def _digest(config: Config, window: str, full: bool = False, quick: bool = False
     if items:
         label = "past 24h" if window == "24h" else "since last run"
         out_path = config.digest_dir / f"{now.strftime('%Y-%m-%d-%H%M')}.md"
-        written = write_digest(config, items, now, label, out_path, full=full, quick=quick)
+        written = write_digest(config, items, now, label, out_path, full=full, quick=quick, fetch_report=fetch_report)
 
     # the cursor moves once the digest is written, and to `now` (not to when the write ended), so a write that fails
     # doesn't use up the window and nothing fetched meanwhile falls between two digests
@@ -160,14 +182,18 @@ def _digest(config: Config, window: str, full: bool = False, quick: bool = False
 
 def write_digest(
     config: Config, items: list[FeedItem], now: datetime, label: str, out_path: Path,
-    full: bool = False, quick: bool = False,
+    full: bool = False, quick: bool = False, fetch_report: FetchReport | None = None,
 ) -> Path:
     """Write what the brief is made from: the LLM export with its post-number map,
     and the ids of every item in `items` (the brief also shows the priority and
     image tweets the export leaves out, and finds them again by id). The full
     digest is written at `out_path` only with `full`, the quick digest next to it
     only with `quick`. Which items go in is the caller's business (see `_digest`,
-    or scripts/freeze_export.py)."""
+    or scripts/freeze_export.py).
+
+    `fetch_report` is what the last fetch could not do: it ends the full and the quick
+    digest, and is kept next to the export (`.fetch.json`) for the brief to end with too.
+    The export itself never carries it: that is the model's reading, not the user's."""
     priority_sources = frozenset(s.name for s in config.sources if s.priority)
     quick_path, export_path, map_path, items_path = _companions(out_path)
     export_path.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +203,7 @@ def write_digest(
             build_markdown(
                 items, now, label=label, priority_sources=priority_sources,
                 similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
+                fetch_report=fetch_report,
             ),
             encoding="utf-8",
         )
@@ -187,6 +214,7 @@ def write_digest(
                 recap_groups=config.recap_groups, full_name=out_path.name if full else "",  # no link to a file not written
                 similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
                 retweet_chars=config.retweet_chars, media_chars=config.media_chars,
+                fetch_report=fetch_report,
             ),
             encoding="utf-8",
         )
@@ -197,6 +225,11 @@ def write_digest(
     )
     export_path.write_text(export_text, encoding="utf-8")
     map_path.write_text(json.dumps(export_map, ensure_ascii=False, indent=1), encoding="utf-8")
+    fetch_path = export_path.with_suffix(".fetch.json")
+    if fetch_report is not None:
+        fetch_path.write_text(fetch_report.to_json(), encoding="utf-8")
+    else:
+        fetch_path.unlink(missing_ok=True)  # an earlier digest of the same minute: its report is not this one's
     return out_path
 
 

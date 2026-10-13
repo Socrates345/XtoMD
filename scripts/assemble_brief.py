@@ -41,6 +41,7 @@ from xmd.summary.brief import (  # noqa: E402
 )
 from xmd.summary.chunk import parse_export  # noqa: E402
 from xmd.core.config import Language, load_config  # noqa: E402
+from xmd.core.models import FetchReport  # noqa: E402
 from xmd.summary.engine import API_KEY_ENV_VAR, Engine  # noqa: E402
 from xmd.summary.prompt import load_section_prompt  # noqa: E402
 from xmd.summary.runner import compression_label  # noqa: E402
@@ -138,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
               f"(the full digest {full.name} would do, but it is missing too)")
         return 1
 
+    fetch_path = export.with_suffix(".fetch.json")  # what the digest's fetch could not do, when it said anything
+    fetch_report = FetchReport.from_json(fetch_path.read_text(encoding="utf-8")) if fetch_path.exists() else None
+
     items, history = digest_items(ids, config.storage, HISTORY_DAYS)
     if len(items) != len(ids):
         print(f"WARNING: {len(ids) - len(items)} of the digest's {len(ids)} items are no longer in the database")
@@ -180,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             full_name=full.name if full.exists() else "",  # the full digest is optional: no link to a file that isn't there
             topics=topics, summaries=summaries,
             model_line=f"Brief by {engine['model']}, {compression}, prompt {manifest['prompt']['sha256'][:8]}, run {run.name}",
-            translated=translated, cuts=cuts,
+            translated=translated, cuts=cuts, fetch_report=fetch_report,
         )
 
     minutes = args.time or manifest.get("time_budget")

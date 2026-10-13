@@ -11,7 +11,7 @@ from xmd.summary.brief import (
 )
 from xmd.summary.chunk import parse_export
 from xmd.digest.export import build_export
-from xmd.core.models import FeedItem
+from xmd.core.models import FeedItem, FetchReport
 from xmd.summary.topics import Topic
 
 NOW = datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
@@ -391,3 +391,20 @@ def test_a_priority_tweet_shows_its_pictures_first_with_a_blank_line_after_each_
     assert lines[heading + 2] == "![](https://img.example/a.jpg)" and lines[heading + 3] == ""
     assert lines[heading + 4] == "![](https://img.example/b.jpg)" and lines[heading + 5] == ""
     assert lines[heading + 6] == "the priority caption"  # the text is the caption, below both pictures
+
+
+def test_a_brief_whose_fetch_had_trouble_says_so_in_its_first_line_and_ends_with_the_report():
+    """On a timer the brief is all its reader sees of the run: an account that could not be fetched must not be
+    something only the log knows."""
+    report = FetchReport(NOW, 9, failed=(("@bob", "Server error '520 <none>'"),))
+    md = _brief(fetch_report=report).markdown
+
+    top = md.splitlines()[2]
+    assert "min read" in top and top.endswith("⚠ [1 source not fetched](#Fetch%20report)")
+    assert _headings(md)[-1] == "## Fetch report"
+    assert "- @bob: Server error '520 &lt;none&gt;'" in md and "<none>" not in md
+
+
+def test_a_brief_whose_fetch_went_well_says_nothing_about_it():
+    assert "Fetch report" not in _brief().markdown
+    assert _brief(fetch_report=FetchReport(NOW, 9)).markdown == _brief().markdown

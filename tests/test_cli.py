@@ -11,7 +11,7 @@ from xmd.cli import (
     _report_failures,
 )
 from xmd.core.config import Config, Source
-from xmd.core.models import FeedItem
+from xmd.core.models import FeedItem, FetchReport
 from xmd.core.store import Store
 from xmd.ingest.fetcher import FetchResult
 from xmd.summary.brief import digest_item_ids, load_item_ids
@@ -512,3 +512,62 @@ def test_a_fetch_whose_output_is_not_a_terminal_still_says_where_it_is(tmp_path,
     assert capsys.readouterr().out.splitlines() == [
         "fetching sources: 1/2", "fetching sources: 2/2", "fetched: 0 new item(s)",
     ]
+
+
+def _fetch_that_answers(monkeypatch, result: FetchResult) -> None:
+    from xmd import cli as cli_module
+
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+        return result
+
+    monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
+
+
+def test_the_digest_ends_with_what_its_fetch_could_not_do_and_keeps_it_for_the_brief(tmp_path, monkeypatch):
+    _fetch_that_answers(monkeypatch, FetchResult(
+        [FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")],
+        [(Source(name="Alice A", type="twitterapi", handle="alice"), "could not resolve @alice to a user id"),
+         (Source(name="@bob", type="twitterapi", handle="bob"),
+          "Server error '520 <none>' for url 'https://api.example/user/tweets?userId=7'")],
+        not_found=frozenset({"Alice A"}),
+        warnings=["source @carol: fetch stopped at the safety ceiling of 100 items"],
+    ))
+    config = _config(tmp_path)
+    asyncio.run(_fetch_to_store(config))
+    out_path = _digest(config, "since-run", full=True, quick=True)
+    quick_path, export_path, _map_path, _items_path = _companions(out_path)
+
+    report = FetchReport.from_json(export_path.with_suffix(".fetch.json").read_text(encoding="utf-8"))
+    assert report.sources == 1
+    assert report.not_found == (("@alice (Alice A)", "could not resolve @alice to a user id"),)
+    assert report.failed == (("@bob", "Server error '520 <none>'"),)  # without the URL httpx names
+    assert report.warnings == ("source @carol: fetch stopped at the safety ceiling of 100 items",)
+    for page in (out_path, quick_path):
+        text = page.read_text(encoding="utf-8")
+        assert text.count("## Fetch report") == 1
+        assert "\n⚠ [2 sources not fetched, 1 fetch warning](#Fetch%20report)\n" in text  # said at the top too
+        assert "@alice (Alice A)" in text and "Server error '520 &lt;none&gt;'" in text
+    assert "Fetch report" not in export_path.read_text(encoding="utf-8")  # the model's reading, not the user's
+
+
+def test_a_fetch_without_trouble_adds_nothing_to_the_digest(tmp_path, monkeypatch):
+    _fetch_that_answers(monkeypatch, FetchResult(
+        [FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")]))
+    config = _config(tmp_path)
+    asyncio.run(_fetch_to_store(config))
+    out_path = _digest(config, "since-run", full=True, quick=True)
+    quick_path, export_path, _map_path, _items_path = _companions(out_path)
+
+    assert FetchReport.from_json(export_path.with_suffix(".fetch.json").read_text(encoding="utf-8")).clean
+    assert "Fetch report" not in out_path.read_text(encoding="utf-8") + quick_path.read_text(encoding="utf-8")
+
+
+def test_a_digest_made_before_any_fetch_has_no_report_to_keep(tmp_path):
+    config = _config(tmp_path)
+    store = Store(config.storage)
+    store.add_items([FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")])
+    store.close()
+    out_path = _digest(config, "since-run", full=True)
+
+    assert not _companions(out_path)[1].with_suffix(".fetch.json").exists()
+    assert "Fetch report" not in out_path.read_text(encoding="utf-8")

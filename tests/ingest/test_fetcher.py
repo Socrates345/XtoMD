@@ -2,9 +2,11 @@ import asyncio
 import logging
 import time
 
+import httpx
 import pytest
 
 from xmd.ingest import fetcher
+from xmd.ingest.adapters import HandleNotFound
 from xmd.core.config import Config, Source
 from xmd.core.models import FeedItem
 
@@ -210,3 +212,40 @@ def test_no_warning_when_nothing_was_cut_or_the_ceiling_is_the_users_own(monkeyp
     with caplog.at_level(logging.WARNING, logger="xmd"):
         asyncio.run(fetcher.fetch_all(config))
     assert "safety ceiling" not in caplog.text
+
+
+def _status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://api.example/user/by-username?username=someone")
+    return httpx.HTTPStatusError(f"error '{status}' for url '{request.url}'", request=request,
+                                 response=httpx.Response(status, request=request))
+
+
+def test_an_account_the_backend_does_not_know_is_told_apart_from_a_failure_to_answer(monkeypatch):
+    def flaky_fetch(source, api_key, max_items, max_age_hours=48, fallback_latest=True):
+        if source.handle == "renamed":
+            raise HandleNotFound("could not resolve @renamed to a user id")
+        if source.handle == "deleted":
+            raise _status_error(404)
+        if source.handle == "unlucky":
+            raise _status_error(520)  # the server's trouble, not the account's: the next fetch may get through
+        return []
+
+    monkeypatch.setattr(fetcher.twitterapi_adapter, "fetch", flaky_fetch)
+    config = Config(sources=[_x_source(h) for h in ("renamed", "fine", "deleted", "unlucky")], x_api_key="k")
+    result = asyncio.run(fetcher.fetch_all(config))
+    assert [s.handle for s, _ in result.failed] == ["renamed", "deleted", "unlucky"]
+    assert result.not_found == {"@renamed", "@deleted"}
+
+
+def test_what_the_fetch_warned_about_is_kept_apart_from_the_failures_it_names(monkeypatch):
+    def fake_fetch(source, api_key, max_items, max_age_hours=48, fallback_latest=True):
+        if source.handle == "broken":
+            raise RuntimeError("boom")
+        return _fetched(max_items, source.handle)  # as many as asked for: cut at the safety ceiling
+
+    monkeypatch.setattr(fetcher.twitterapi_adapter, "fetch", fake_fetch)
+    config = Config(sources=[_x_source("broken"), _x_source("alice")], x_api_key="k", max_per_source=0)
+    result = asyncio.run(fetcher.fetch_all(config))
+    assert [s.handle for s, _ in result.failed] == ["broken"]
+    assert len(result.warnings) == 1 and "@alice" in result.warnings[0] and "safety ceiling" in result.warnings[0]
+    assert not any(isinstance(h, fetcher._Warnings) for h in logging.getLogger("xmd").handlers)  # listening is over

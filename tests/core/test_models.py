@@ -1,4 +1,8 @@
-from xmd.core.models import FeedItem, is_echo
+from datetime import datetime, timezone
+
+import pytest
+
+from xmd.core.models import FeedItem, FetchReport, is_echo
 
 
 def _retweet(own: str, original: str) -> FeedItem:
@@ -76,3 +80,22 @@ def test_plain_posts_are_never_retweets():
     item = FeedItem(source="@a", source_type="x", title="t", url="u", text="hi there")
     assert item.own_comment == "hi there"  # falls back to `text` like display_body always did
     assert not item.is_pure_retweet
+
+
+REPORT = FetchReport(
+    datetime(2026, 10, 13, 16, 2, tzinfo=timezone.utc), 212,
+    not_found=(("@old_name (Old Name)", "tweetapi.com: could not resolve @old_name to a user id"),),
+    failed=(("@bob", "Server error '520 <none>'"),),
+    warnings=("source @carol: fetch stopped at the safety ceiling of 100 items",),
+)
+
+
+def test_a_fetch_report_comes_back_from_its_json_as_it_was():
+    assert FetchReport.from_json(REPORT.to_json()) == REPORT
+    assert not REPORT.clean
+    assert FetchReport(REPORT.at, 212).clean  # every source answered, nothing warned about
+
+
+@pytest.mark.parametrize("text", ["", "{", "[]", '{"at": "yesterday"}', '{"at": "2026-10-13T16:02:00+00:00", "sources": 3}'])
+def test_what_is_not_a_fetch_report_reads_as_none_and_never_as_an_error(text):
+    assert FetchReport.from_json(text) is None

@@ -15,3 +15,8 @@ def page_limit(max_items: int, page_size: int) -> int:
     if max_items >= UNLIMITED:
         return MAX_PAGES
     return max(MAX_PAGES, 2 * -(-max_items // page_size))
+
+
+class HandleNotFound(RuntimeError):
+    """The backend answered that it knows no account by this handle: renamed, suspended or deleted. Another fetch
+    will not find it either: only the user can put it right, in sources/x.md."""
