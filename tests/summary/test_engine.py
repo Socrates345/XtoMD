@@ -136,6 +136,21 @@ def test_an_unreachable_server_is_an_engine_error():
         _engine(down).complete("s", "u")
 
 
+def test_only_a_request_the_server_left_unanswered_is_worth_asking_again():
+    def timed_out(request):
+        raise httpx.ReadTimeout("The read operation timed out")
+
+    for handler in (timed_out, lambda r: httpx.Response(503, text="overloaded")):
+        with pytest.raises(EngineError) as error:
+            _engine(handler).complete("s", "u")
+        assert error.value.unanswered
+    answered = (lambda r: httpx.Response(402, text="no credit"), _ok(""), lambda r: httpx.Response(200, json={"nope": 1}))
+    for handler in answered:  # a refusal, an empty reply, a wrong shape: the same again next time
+        with pytest.raises(EngineError) as error:
+            _engine(handler).complete("s", "u")
+        assert not error.value.unanswered
+
+
 def test_an_unexpected_reply_shape_is_an_engine_error():
     with pytest.raises(EngineError, match="unexpected reply shape"):
         _engine(lambda r: httpx.Response(200, json={"nope": 1})).complete("s", "u")

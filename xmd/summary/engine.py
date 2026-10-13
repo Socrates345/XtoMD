@@ -43,6 +43,12 @@ class EngineError(RuntimeError):
         self.completion = completion  # what did come back, when something did (finish reason, token counts)
         self.status = status  # the HTTP status, when the server answered with an error
 
+    @property
+    def unanswered(self) -> bool:
+        """The request got no answer (a timeout, a dropped connection) or a 5xx: what asking again can change. A
+        refusal, an empty reply or a wrong shape would only come back the same."""
+        return isinstance(self.__cause__, httpx.HTTPError) or (self.status or 0) >= 500
+
 
 class ModelChoiceError(ValueError):
     """--model can't be turned into one model id; the message says why and lists the options."""

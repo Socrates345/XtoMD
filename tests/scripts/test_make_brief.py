@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))  # make_brief imports its sibling scripts by name
@@ -21,6 +22,8 @@ class World:
         self.down_polls = 0  # looks at the server that fail before it answers
         self.warmup_error = ""
         self.warmup_status: int | None = None  # the HTTP status the warm-up call is refused with
+        self.warmup_unanswered = 0  # warm-up calls the server leaves without an answer before it takes one
+        self.warmup_asks = 0
         self.digests = tmp_path / "digests"
         self.export: Path | None = self.digests / ".export" / "2026-09-21-1000.txt"
         self.run_code = 0
@@ -58,6 +61,10 @@ class World:
                 return False
 
             def complete(self, system, user, max_tokens):
+                world.warmup_asks += 1
+                if world.warmup_unanswered:
+                    world.warmup_unanswered -= 1
+                    raise EngineError("ReadTimeout: The read operation timed out") from httpx.ReadTimeout("timed out")
                 if world.warmup_error:
                     raise EngineError(world.warmup_error, status=world.warmup_status)
                 world.calls.append(("warm-up", model))
@@ -247,6 +254,26 @@ def test_a_key_over_its_spending_limit_is_reported_as_that_and_not_as_a_thinking
     assert world.calls == []  # nothing fetched: the window is still there for the next run
     out = capsys.readouterr().out
     assert "HTTP 402" in out and "spending limit" in out and "Thinking" not in out
+    assert world.warmup_asks == 1  # the server answered: asking again would get the same refusal
+
+
+def test_a_warm_up_the_server_leaves_unanswered_is_asked_again_and_the_brief_is_made(monkeypatch, tmp_path, capsys):
+    world = World(monkeypatch, tmp_path)
+    world.warmup_unanswered = 1
+
+    assert make_brief.main(["--24h", "--base-url", "https://api.example.com/v1"]) == 0
+    assert world.warmup_asks == 2
+    assert world.steps == ["warm-up", "fetch", "digest", "run_system", "assemble"]
+    assert "did not answer (ReadTimeout" in capsys.readouterr().out
+
+
+def test_a_server_that_leaves_the_second_try_unanswered_too_stops_before_anything_is_fetched(monkeypatch, tmp_path, capsys):
+    world = World(monkeypatch, tmp_path)
+    world.warmup_unanswered = 5
+
+    assert make_brief.main(["--24h", "--base-url", "https://api.example.com/v1"]) == 1
+    assert world.warmup_asks == 2 and world.calls == []
+    assert "nothing was fetched" in capsys.readouterr().out
 
 
 def test_nothing_new_in_the_window_makes_no_brief(monkeypatch, tmp_path):

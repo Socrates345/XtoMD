@@ -172,7 +172,7 @@ systemctl daemon-reload
 systemctl enable --now xmd-brief.timer
 ```
 
-The timer makes a `24h` brief every day at 18:00 Europe/Paris, whatever the server's own clock is set to. To change the hour, edit `OnCalendar=` in `/etc/systemd/system/xmd-brief.timer`, then `systemctl daemon-reload`.
+The timer makes a `24h` brief every day at the hour and on the clock written in `OnCalendar=`, whatever the server's own time zone is set to. To change the hour, edit `OnCalendar=` in `/etc/systemd/system/xmd-brief.timer`, then `systemctl daemon-reload`.
 
 Now run it once the way the timer will, to prove it works inside its sandbox:
 

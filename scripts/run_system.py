@@ -43,8 +43,8 @@ from xmd.summary.budget import (  # noqa: E402
     MAX_COMPRESSION, PRIORITY_SHARE, SUMMARY_SHARE, bare_cuts, choose_compression, parse_minutes, summary_lines,
 )
 from xmd.summary.engine import (  # noqa: E402
-    API_KEY_ENV_VAR, BASE_URL_ENV_VAR, DEFAULT_BASE_URL, EXTRA_BODY_ENV_VAR, MODEL_ENV_VAR, Engine, EngineError,
-    ModelChoiceError, choose_model, list_models, on_this_machine, parse_extra_body,
+    API_KEY_ENV_VAR, BASE_URL_ENV_VAR, DEFAULT_BASE_URL, EXTRA_BODY_ENV_VAR, MODEL_ENV_VAR, Completion, Engine,
+    EngineError, ModelChoiceError, choose_model, list_models, on_this_machine, parse_extra_body,
 )
 from xmd.summary.prompt import BRIEF_SCHEMA, DEFAULT_PROMPT, bounded_schema, load_prompt  # noqa: E402
 from xmd.summary.runner import (  # noqa: E402
@@ -52,6 +52,19 @@ from xmd.summary.runner import (  # noqa: E402
 )
 
 CONTEXT_TOKENS = 8192  # what the plan sizes every call for
+
+
+def warm_up(engine: Engine, retries: int = 1) -> Completion:
+    """The call that opens a run: it loads the model outside the timed calls, and a thinking model fails here, not
+    after ten calls. A hosted server now and then leaves one request unanswered and takes the next: a call that
+    got no answer is made again, up to `retries` times. One the server did answer, even to refuse, is not."""
+    for left in range(retries, -1, -1):
+        try:
+            return engine.complete("Reply with one word.", "ok", max_tokens=16)
+        except EngineError as exc:
+            if not left or not exc.unanswered:
+                raise
+            print(f"the server did not answer ({exc}): asking again")
 
 
 def _sha(path: Path) -> str:
@@ -216,7 +229,8 @@ def main(argv: list[str] | None = None) -> int:
                          "--no-bound-items sends the plain schema")
     ap.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS, help="posts per chunk, in estimated tokens")
     ap.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
-    ap.add_argument("--retries", type=int, default=1, help="extra attempts for a chunk that fails")
+    ap.add_argument("--retries", type=int, default=1,
+                    help="extra attempts for a chunk that fails, and for a warm-up the server leaves unanswered")
     ap.add_argument("--timeout", type=float, default=600, help="seconds per call")
     ap.add_argument("--stats", action="store_true",
                     help="print the full chunk plan, per-chunk progress, token counts, characters-per-token, "
@@ -285,8 +299,8 @@ def main(argv: list[str] | None = None) -> int:
     with Engine(model, args.base_url, args.api_key, args.timeout, args.no_think, args.extra_body) as engine:
         if args.stats:
             print(f"\nmodel {model}" + ("  (thinking off requested)" if args.no_think else ""))
-        try:  # loads the model outside the timed calls, and a thinking model fails here, not after ten calls
-            warm = engine.complete("Reply with one word.", "ok", max_tokens=16)
+        try:
+            warm = warm_up(engine, args.retries)
         except EngineError as exc:
             print(f"warm-up failed, nothing was run: {exc}")
             return 1

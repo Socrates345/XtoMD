@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"model {model}: checking that it answers ...")
     try:  # loads the model now, and a model that thinks fails here, before anything is fetched
         with Engine(model, args.base_url, args.api_key, WARMUP_TIMEOUT, extra_body=args.extra_body) as engine:
-            warm = engine.complete("Reply with one word.", "ok", max_tokens=16)
+            warm = run_system.warm_up(engine)
     except EngineError as exc:
         print(f"the model did not answer, nothing was fetched: {exc}\n"
               + (refusal_hint(exc.status) or

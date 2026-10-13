@@ -262,6 +262,7 @@ systemctl daemon-reload
 | You see | Cause and fix |
 | --- | --- |
 | `cannot reach the server, nothing was fetched` | The machine cannot reach Venice (network, or a typo in `XMD_LLM_BASE_URL`). A hosted server is not waited for: run it again. |
+| `the server did not answer (... ReadTimeout ...): asking again` | Venice left one call without an answer. The run asks once more by itself and carries on: nothing to do. If the second try gets none either, it stops with `warm-up failed, nothing was run` or `the model did not answer, nothing was fetched`: make the brief again (`systemctl start xmd-brief.service`, or `generate-last-24h-brief`). |
 | `the model did not answer ... spent its tokens thinking`, or empty replies | `XMD_LLM_EXTRA_BODY` is missing or lost its single quotes. |
 | `HTTP 401` | The Venice key is wrong: check `XMD_LLM_API_KEY` in `.env` (no spaces, no quotes, the whole key). |
 | `HTTP 402 ... Insufficient USD or Diem balance` | The account has no credit left: add some in Venice's API settings. |
