@@ -1,4 +1,4 @@
-from xmd.core.config import Config
+from xmd.core.config import Config, Source
 from xmd.ingest.filters import apply_filters
 from xmd.core.models import FeedItem
 
@@ -58,7 +58,7 @@ def test_keyword_blocklist_case_insensitive():
     ]
     cfg = _cfg(block_keywords=["giveaway"])
     kept = apply_filters(items, cfg)
-    # substring match is deliberate and blunt: both giveaway titles go
+    # a keyword is the start of a word, not the whole of it: both giveaway titles go
     assert [i.title for i in kept] == ["normal tweet"]
 
 
@@ -85,6 +85,88 @@ def test_a_keyword_is_not_found_across_the_seam_between_two_parts_of_a_tweet():
         retweet_of_author="orig", retweet_of_text="nothing",
     )
     assert apply_filters([item], _cfg(block_keywords=["give away"])) == [item]
+
+
+def test_a_keyword_counts_from_the_start_of_a_word_only():
+    items = [_item("we made it"), _item("three ads today"), _item("sponsored #ad"), _item("AD: buy now")]
+    kept = apply_filters(items, _cfg(block_keywords=["ad"]))
+    assert [i.title for i in kept] == ["we made it"]  # "made" holds "ad", but no word starts with it
+
+
+def test_a_keyword_in_a_script_written_without_spaces_is_found_anywhere():
+    assert apply_filters([_item("领取空投奖励"), _item("领取airdrop奖励")], _cfg(block_keywords=["空投", "airdrop"])) == []
+
+
+def _from(handle: str, title: str, **kw) -> FeedItem:
+    return FeedItem(source=f"@{handle}", source_type="x", title=title, url=f"https://x.com/{handle}/{abs(hash(title))}", **kw)
+
+
+def _following(**options) -> Config:
+    """@carol with these options of her own, and @dave with none."""
+    return Config(sources=[
+        Source(name="@carol", type="twitterapi", handle="carol", **options),
+        Source(name="@dave", type="twitterapi", handle="dave"),
+    ])
+
+
+def test_reposts_off_drops_that_source_s_plain_retweets_and_nothing_else():
+    quote = _from("carol", "my take on this", retweet_of_author="orig", retweet_of_text="the post she quotes")
+    items = [
+        _from("carol", "RT @orig: something reshared"),
+        quote,  # her own words on someone's post: the adapters give it no RT title
+        _from("carol", "her own post"),
+        _from("dave", "RT @orig: reshared by someone else"),
+    ]
+    kept = apply_filters(items, _following(reposts=False))
+    assert [i.title for i in kept] == ["my take on this", "her own post", "RT @orig: reshared by someone else"]
+
+
+def test_hide_drops_that_source_s_tweets_with_the_keyword():
+    items = [_from("carol", "new airdrop live"), _from("carol", "market notes"), _from("dave", "airdrop season")]
+    kept = apply_filters(items, _following(hide=("airdrop",)))
+    assert [i.title for i in kept] == ["market notes", "airdrop season"]
+
+
+def test_only_keeps_that_source_s_tweets_with_one_of_the_keywords():
+    items = [
+        _from("carol", "new AIRDROP live"),
+        _from("carol", "market notes"),
+        _from("carol", "points program update"),
+        _from("carol", "look at this", retweet_of_author="orig", retweet_of_text="an airdrop was announced"),
+        _from("dave", "market notes from dave"),
+    ]
+    kept = apply_filters(items, _following(only=("airdrop", "points")))
+    assert [i.title for i in kept] == ["new AIRDROP live", "points program update", "look at this", "market notes from dave"]
+
+
+def test_only_and_hide_together_keep_what_matches_the_first_and_none_of_the_second():
+    items = [_from("carol", "airdrop is live"), _from("carol", "fake airdrop scam warning"), _from("carol", "hello")]
+    kept = apply_filters(items, _following(only=("airdrop",), hide=("scam",)))
+    assert [i.title for i in kept] == ["airdrop is live"]
+
+
+def test_a_fetch_says_how_many_tweets_were_filtered_out_and_why(caplog):
+    items = [
+        _from("carol", "RT @orig: reshared"),
+        _from("carol", "a giveaway"),
+        _from("carol", "nothing she is followed for"),
+        _from("carol", "airdrop one"),
+        _from("dave", "R to @stranger: a reply"),
+        _from("dave", "same words", author="dave", full_text="same words"),
+        FeedItem(source="@dave", source_type="x", title="same words", author="dave", full_text="same words",
+                 url="https://x.com/dave/again"),
+    ]
+    with caplog.at_level("INFO", logger="xmd"):
+        kept = apply_filters(items, _following(reposts=False, hide=("giveaway",), only=("airdrop", "giveaway")))
+    assert [i.title for i in kept] == ["airdrop one", "same words"]
+    assert ("filtered out 5 of 7 tweet(s): 1 retweets, 1 replies, 1 hidden keywords, 1 outside only:, 1 duplicates"
+            in caplog.text)
+
+
+def test_a_fetch_that_filters_nothing_out_says_nothing(caplog):
+    with caplog.at_level("INFO", logger="xmd"):
+        apply_filters([_from("dave", "a post")], _following())
+    assert "filtered out" not in caplog.text
 
 
 def test_normal_items_untouched():

@@ -66,6 +66,148 @@ def test_priority_field_marks_source_priority(tmp_path):
     assert by_handle["dave"].priority is False
 
 
+def test_what_a_handle_says_is_written_variable_value_in_any_order(tmp_path):
+    x_md = (
+        "NewsFrank | name:Frank Wire | priority:high\n"
+        "jumper | only:airdrop\n"
+        "bob | hide: giveaway, presale | name: Bob\n"
+        "carol | reposts:off | Priority : High\n"
+        "dave | priority:normal | reposts:on\n"
+    )
+    by_handle = {s.handle: s for s in load_config(_setup(tmp_path, x_md=x_md)).sources}
+
+    assert (by_handle["NewsFrank"].name, by_handle["NewsFrank"].priority) == ("Frank Wire", True)
+    assert (by_handle["jumper"].name, by_handle["jumper"].only) == ("@jumper", ("airdrop",))  # no name needed
+    assert (by_handle["bob"].name, by_handle["bob"].hide) == ("Bob", ("giveaway", "presale"))  # the name comes last
+    carol = by_handle["carol"]
+    assert (carol.reposts, carol.priority) == (False, True)  # spaces and capitals change nothing
+    dave = by_handle["dave"]
+    assert (dave.priority, dave.reposts, dave.only, dave.hide) == (False, True, (), ())  # the defaults, written out
+
+
+def test_what_a_group_says_is_written_variable_value_too(tmp_path):
+    x_md = (
+        "## business | level:high\nfoo\n"
+        "## chat | recap:on | level:low\nbar\n"
+        "## news | level:low | recap:off\nbaz\n"
+        "## rest | level:medium\nqux\n"
+    )
+    cfg = load_config(_setup(tmp_path, x_md=x_md))
+    assert cfg.group_levels == {"business": "high", "news": "low"}  # a recap group has no level, medium is normal
+    assert cfg.recap_groups == frozenset({"chat"})
+
+
+def test_a_list_written_before_variable_value_still_loads(tmp_path):
+    """Bare words in the fields, and the name as the first field that is no option: every list until now."""
+    x_md = (
+        "## Business | high | rp_off\n"
+        "NewsFrank | Frank Wire | priority\n"
+        "carol | rp_off | Carol | priority\n"
+        "## Chatter | recap | low\n"
+        "dave | Crypto: The News\n"
+    )
+    cfg = load_config(_setup(tmp_path, x_md=x_md))
+    by_handle = {s.handle: s for s in cfg.sources}
+
+    frank, carol = by_handle["NewsFrank"], by_handle["carol"]
+    assert (frank.name, frank.priority, frank.reposts) == ("Frank Wire", True, False)
+    assert (carol.name, carol.priority, carol.reposts) == ("Carol", True, False)
+    assert by_handle["dave"].name == "Crypto: The News"  # a colon in a name does not make it a variable
+    assert (cfg.group_levels, cfg.recap_groups) == ({"business": "high"}, frozenset({"chatter"}))
+
+
+@pytest.mark.parametrize("quoted", ['"#ad"', "“#ad”"])  # straight quotes, and a phone keyboard's curly ones
+def test_a_quoted_keyword_keeps_its_hash_and_its_comma(tmp_path, quoted):
+    """Unquoted, the `#` would start a comment and take the rest of the line with it."""
+    x_md = f'bob | hide: {quoted}, "buy, sell" | priority:high  # a real comment\n'
+    bob = load_config(_setup(tmp_path, x_md=x_md)).sources[0]
+    assert bob.hide == ("#ad", "buy, sell")
+    assert bob.priority is True  # what follows the quoted keyword is still read
+
+
+def test_a_quoted_name_keeps_its_hash_and_its_pipe(tmp_path):
+    source = load_config(_setup(tmp_path, x_md='csharp | name:"C# Weekly | News" | priority:high\n')).sources[0]
+    assert (source.name, source.priority) == ("C# Weekly | News", True)
+
+
+def test_a_double_slash_starts_a_comment_wherever_a_hash_does(tmp_path):
+    """`//` is the comment to write: a line that opens with `#` is a heading to a markdown reader."""
+    x_md = (
+        '// a whole line, with a "quote" and a # in it\n'
+        "dave | name:David  // after a handle\n"
+        "## crypto | level:high | reposts:off  // after a group's options\n"
+        'bob | hide: "http://", scam  // quoted, the keyword keeps its slashes\n'
+        "## news // after a group's name\n"
+        "erin\n"
+    )
+    cfg = load_config(_setup(tmp_path, x_md=x_md))
+    by_handle = {s.handle: s for s in cfg.sources}
+
+    assert list(by_handle) == ["dave", "bob", "erin"]  # the comment line is no handle
+    assert by_handle["dave"].name == "David"
+    assert (by_handle["bob"].group, by_handle["bob"].reposts, by_handle["bob"].hide) == ("crypto", False, ("http://", "scam"))
+    assert by_handle["erin"].group == "news"
+    assert cfg.group_levels == {"crypto": "high"}
+
+
+def test_a_list_commented_with_hashes_still_loads_as_it_did(tmp_path):
+    x_md = "# a whole line\ndave | David  # after a handle\n## C# devs\nerin\n"
+    by_handle = {s.handle: s for s in load_config(_setup(tmp_path, x_md=x_md)).sources}
+
+    assert list(by_handle) == ["dave", "erin"]
+    assert by_handle["dave"].name == "David"
+    assert by_handle["erin"].group == "c# devs"  # a group's name keeps its #
+
+
+def test_a_group_s_filters_hold_for_each_of_its_handles(tmp_path):
+    x_md = (
+        "alice\n"
+        "## crypto | level:high | reposts:off | hide:presale  // a comment after the options\n"
+        "bob\n"
+        "dave | hide:giveaway | only:airdrop\n"
+        "frank | reposts:on\n"
+        "## news\n"
+        "erin | reposts:off\n"
+    )
+    cfg = load_config(_setup(tmp_path, x_md=x_md))
+    by_handle = {s.handle: s for s in cfg.sources}
+
+    assert (by_handle["bob"].reposts, by_handle["bob"].hide) == (False, ("presale",))
+    dave = by_handle["dave"]
+    assert (dave.reposts, dave.hide, dave.only) == (False, ("presale", "giveaway"), ("airdrop",))  # keywords add up
+    assert by_handle["frank"].reposts is True  # a handle that says otherwise wins over its group
+    assert (by_handle["alice"].reposts, by_handle["alice"].hide) == (True, ())  # above the header
+    assert (by_handle["erin"].reposts, by_handle["erin"].hide) == (False, ())  # the next group starts clean
+    assert cfg.group_levels == {"crypto": "high"}  # the level is still read next to them
+
+
+def test_a_field_that_is_no_variable_is_warned_about_not_silently_ignored(tmp_path, caplog):
+    with caplog.at_level("WARNING", logger="xmd"):
+        cfg = load_config(_setup(tmp_path, x_md="carol | name:Carol | priorty:high\ndave | name:David | priority:high\n"))
+    carol = cfg.sources[0]
+    assert (carol.name, carol.priority) == ("Carol", False)
+    assert "unknown option 'priorty:high' on @carol is ignored (use name:, priority:, reposts:, only:, hide:)" in caplog.text
+    assert "dave" not in caplog.text  # and a correct line says nothing
+
+
+def test_a_value_a_variable_does_not_take_is_warned_about_and_changes_nothing(tmp_path, caplog):
+    with caplog.at_level("WARNING", logger="xmd"):
+        cfg = load_config(_setup(tmp_path, x_md="## crypto | level:hgih\ncarol | reposts:no | priority:low\n"))
+    carol = cfg.sources[0]
+    assert (carol.reposts, carol.priority, cfg.group_levels) == (True, False, {})
+    assert "unknown value 'hgih' for `level:` on group 'crypto' is ignored (use high, low, normal, medium, regular)" in caplog.text
+    assert "unknown value 'no' for `reposts:` on @carol is ignored (use on, off)" in caplog.text
+    assert "unknown value 'low' for `priority:` on @carol is ignored (use high, normal)" in caplog.text
+
+
+@pytest.mark.parametrize("line", ["jumper | only:", "jumper | only: #airdrop"])  # the second: an unquoted # is a comment
+def test_a_filter_that_names_no_keyword_is_warned_about_and_keeps_everything(tmp_path, caplog, line):
+    with caplog.at_level("WARNING", logger="xmd"):
+        jumper = load_config(_setup(tmp_path, x_md=line + "\n")).sources[0]
+    assert jumper.only == ()  # not "keep nothing"
+    assert "`only:` on @jumper names no keyword" in caplog.text
+
+
 def test_x_backend_defaults_to_twitterapi(tmp_path):
     path = _setup(tmp_path)
     assert load_config(path).x_backend == "twitterapi"

@@ -117,11 +117,24 @@ Run all commands from the repo root. `--config` and `--version` go before the su
 
 ## Config
 
-**`sources/x.md`**: X handle per line (see `sources.example/x.md`).
+**`sources/x.md`**: one X handle per line, then `variable:value` fields between `|`, in any order. `## group` headers split the handles into sections and take variables too. `//` starts a comment. See `sources.example/x.md`.
 
-- `priority`: the source's tweets sort first in their section, stay whole in the quick digest and appear in full under **★ Priority** in the brief. Also applies, unmarked, to a tweet from someone who hadn't posted in over 15 days (a source with no earlier post in your database is left alone — it can't be told from one you just added).
-- `recap` (group option): a group only worth its overall picture. The quick digest collapses it; the brief sorts it into themes (about 12% of its words, roughly one theme per 5 posts), each linking every post it groups; the full digest still lists every tweet.
-- `high` or `low` (`normal` is the default): how much of the group the brief keeps, ×1.5 or ×0.5 of the usual share. A recap group ignores a level.
+| Variable | Goes on | Values | What it does |
+| --- | --- | --- | --- |
+| `name` | handle | any text | Shown instead of `@handle`. |
+| `priority` | handle | `high`, `normal` (default) | `high`: its tweets come first and are shown in full. |
+| `reposts` | handle, group | `on` (default), `off` | `off`: its plain retweets (reposts) are dropped. One with its own comment is kept. |
+| `only` | handle, group | keywords, e.g. `only:airdrop, points` | Keeps only the tweets that have one of them. |
+| `hide` | handle, group | keywords | Drops the tweets that have one of them. |
+| `level` | group | `high`, `normal` (default), `low` | How much of the group the brief keeps. |
+| `recap` | group | `on`, `off` (default) | `on`: a group only worth its overall picture. |
+
+- `priority:high`: the source's tweets sort first in their section, stay whole in the quick digest and appear in full under **★ Priority** in the brief. Also applies, unmarked, to a tweet from someone who hadn't posted in over 15 days (a source with no earlier post in your database is left alone — it can't be told from one you just added).
+- Keywords: with both `only` and `hide`, a tweet needs a keyword of `only` and none of `hide`. A keyword counts from the start of a word, in any case (`ad` finds `ads` and `#ad`, not `made`), in the tweet or in the post it retweets or quotes. One that holds a `#`, a `//` or a comma goes in double quotes.
+- `reposts`, `only` and `hide` on a group hold for each of its handles: a handle's own `reposts` wins, its keywords are added. They act at fetch, like `filters:` in `sources.yaml`: a filtered tweet is never stored, so changing the variable later does not bring it back, and `xmd fetch` says how many it filtered out and why. The 15-day rule above only sees what is stored: an account left with few tweets shows them under **★ Priority**.
+- `recap:on`: a group only worth its overall picture. The quick digest collapses it; the brief sorts it into themes (about 12% of its words, roughly one theme per 5 posts), each linking every post it groups; the full digest still lists every tweet.
+- `level:high` or `level:low`: ×1.5 or ×0.5 of the usual share. A recap group ignores a level.
+- A list written the old way still loads: `handle | Display Name | priority`, and `## group | recap` or `| high`.
 
 **`sources.yaml`**: your API keys and settings — see `sources.example.yaml`.
 
@@ -281,7 +294,7 @@ Checks a run's summaries and writes `digests/<date>-<hour>-<window>-brief.md`. A
 | `section summary ...: skipped` | The server was down at assemble time: start it and run `assemble_brief.py` again; cached answers aren't asked twice. |
 | chunks FAILED "too thin" or "hit the token cap" | The model can't follow the format: try another model; look at `run_stats.py`. |
 | `no export in digests/.export` | Run `xmd digest` first. |
-| `unknown option 'hgih' on group ...` | A typo on a group header in `sources/x.md`: use `high`, `normal`, `low` or `recap`. |
+| `unknown option 'hgih' on group ...` (or `on @handle`), `unknown value ...` | A typo in `sources/x.md`: the message lists what that line can take. Not caught: a mistyped variable right after the handle on a line with no `name:`, which is read as the display name, the old way (`xmd sources` shows it). |
 
 ## Layout and development
 

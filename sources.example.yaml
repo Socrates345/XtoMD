@@ -40,8 +40,10 @@ filters:
                          # the original) — set true to exclude them
   drop_replies: true     # exclude replies (thread continuations to your own
                          # tweets are always kept regardless)
-  block_keywords: []     # drop tweets whose text contains any of these
-                         # (case-insensitive), e.g. ["#ad", "giveaway"]
+  block_keywords: []     # drop tweets that have any of these, counted from the
+                         # start of a word (case-insensitive: "ad" finds "ads",
+                         # not "made"), e.g. ["#ad", "giveaway"]. For one account
+                         # or one group only: `hide:` in sources/x.md
 
 digest:
   snippet_chars: 140     # quick digest (`xmd digest --quick`): length of a regular post's one-liner

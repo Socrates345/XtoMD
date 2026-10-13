@@ -67,7 +67,10 @@ class Source:
     handle: str = ""  # X handle, no "@"
     platform: str = "x"  # "x" today; a future adapter would add "rss" etc.
     group: str = ""  # interest group from a `## header` in sources/x.md ("" = none)
-    priority: bool = False  # from a `| priority` field: sorts first within its section
+    priority: bool = False  # `priority:high` in sources/x.md: sorts first within its section
+    reposts: bool = True  # `reposts:off`, its own or its group's: its plain retweets are dropped at fetch
+    only: tuple[str, ...] = ()  # `only: a, b`: of its tweets, just those with one of these keywords are kept
+    hide: tuple[str, ...] = ()  # `hide: a, b`: its tweets with one of these keywords are dropped
 
 
 @dataclass
@@ -78,7 +81,7 @@ class Config:
     drop_retweets: bool = False  # quality filter: exclude X retweets
     drop_replies: bool = True  # quality filter: exclude X replies
     block_keywords: list[str] = field(default_factory=list)
-    recap_groups: frozenset[str] = frozenset()  # groups marked `| recap` in sources/x.md (lowercased)
+    recap_groups: frozenset[str] = frozenset()  # groups marked `recap:on` in sources/x.md (lowercased)
     group_levels: dict[str, str] = field(default_factory=dict)  # group (lowercased) -> "high" | "low"; absent = normal
     snippet_chars: int = 140  # quick digest: length of a regular post's one-liner
     retweet_chars: int = 100  # quick digest: length of a plain retweet's one-liner
@@ -99,65 +102,168 @@ class Config:
 
 
 _LEGACY_AIM_PREFIXES = ("focus:", "aim:")
+
+# The variables of sources/x.md, written `variable:value` in the `|` fields after a handle or a group's name. Their
+# names and the words their values take are spelled here and nowhere else in the code: to rename one, change it
+# here, then where the docs and the tests quote it (README.md, sources.example/x.md, tests/core/test_config.py).
+NAME = "name"  # a handle: the name shown instead of @handle
+PRIORITY = "priority"  # a handle: `high` = its tweets sort first and are shown in full
+REPOSTS = "reposts"  # a handle or a group: `off` = its plain retweets are dropped at fetch
+ONLY = "only"  # a handle or a group: keep only the tweets with one of these keywords
+HIDE = "hide"  # a handle or a group: drop the tweets with one of these keywords
+LEVEL = "level"  # a group: how much of it the brief keeps
+RECAP = "recap"  # a group: `on` = only worth its overall picture
 # what a group header may say about its importance; "normal" (also written medium or regular) is the default
 LEVEL_WORDS = {"high": "high", "low": "low", "normal": "normal", "medium": "normal", "regular": "normal"}
-_HEADER_OPTIONS = frozenset(LEVEL_WORDS) | {"recap"}
+# the words each variable's value takes -> what the rest of the code is given
+_VALUES: dict[str, dict] = {
+    PRIORITY: {"high": True, "normal": False},
+    REPOSTS: {"on": True, "off": False},
+    RECAP: {"on": True, "off": False},
+    LEVEL: LEVEL_WORDS,
+}
+_HANDLE_VARIABLES = (NAME, PRIORITY, REPOSTS, ONLY, HIDE)
+_GROUP_VARIABLES = (LEVEL, RECAP, REPOSTS, ONLY, HIDE)
+# how a list written before `variable:value` said the same things, with a bare word in a field: still read. These
+# are the old words, not the ones above: renaming a variable or a value leaves them alone
+_BARE_WORDS: dict[str, tuple] = {
+    "priority": (PRIORITY, True), "rp_off": (REPOSTS, False), "recap": (RECAP, True),
+    "high": (LEVEL, "high"), "low": (LEVEL, "low"),
+    "normal": (LEVEL, "normal"), "medium": (LEVEL, "normal"), "regular": (LEVEL, "normal"),
+}
+_QUOTES = '"“”'  # the curly ones are what a phone keyboard types
+# what starts a comment. `//` is the one to write: a line that opens with `#` is a heading to whatever renders the
+# markdown (Obsidian, GitHub). `#` is still read, so a list written before `//` existed loads as it did
+_COMMENT_MARKS = ("//", "#")
+
+
+def _split(text: str, sep: str) -> list[str]:
+    """`text` cut at each `sep` that is not inside double quotes, which stay in: a quoted keyword may hold a
+    `#`, a `//`, a `,` or a `|` (`hide: "#ad"`)."""
+    parts, quoted, k = [""], False, 0
+    while k < len(text):
+        if text[k] in _QUOTES:
+            quoted = not quoted
+        if not quoted and text.startswith(sep, k):
+            parts.append("")
+            k += len(sep)
+        else:
+            parts[-1] += text[k]
+            k += 1
+    return parts
+
+
+def _uncomment(text: str) -> str:
+    for mark in _COMMENT_MARKS:
+        text = _split(text, mark)[0]
+    return text
+
+
+def _read_fields(fields: list[str], variables: tuple[str, ...], where: str) -> dict:
+    """{variable: value} of the `|` fields after a handle or a group's name, for the `variables` that line may
+    set; one it does not set is not in the result. A variable written twice keeps its first value, keywords add
+    up. `where` names the line in a warning."""
+    found: dict = {}
+    other: list[str] = []  # the fields that are no `variable:value`
+    for field in (f.strip() for f in fields):
+        key, colon, value = (p.strip() for p in field.partition(":"))
+        key = key.lower()
+        if not colon or key not in variables:
+            variable, meant = _BARE_WORDS.get(field.lower(), ("", None))
+            if variable in variables:
+                found.setdefault(variable, meant)
+            elif field:
+                other.append(field)
+        elif key in (ONLY, HIDE):
+            words = tuple(w for w in (p.strip().strip(_QUOTES).strip() for p in _split(value, ",")) if w)
+            if not words:  # `only:` with nothing after it must not mean "keep nothing"
+                log.warning("sources/x.md: `%s:` on %s names no keyword and is ignored (a keyword holding a #, a // or"
+                            " a comma goes in double quotes)", key, where)
+            found[key] = found.get(key, ()) + words
+        elif key == NAME:
+            if len(value) > 1 and value[0] in _QUOTES and value[-1] in _QUOTES:  # quoted, a name may hold a # or a |
+                value = value[1:-1].strip()
+            found.setdefault(key, value)
+        elif value.lower() in _VALUES[key]:
+            found.setdefault(key, _VALUES[key][value.lower()])
+        else:  # `priority:hgih` must not silently mean normal
+            log.warning("sources/x.md: unknown value %r for `%s:` on %s is ignored (use %s)",
+                        value, key, where, ", ".join(_VALUES[key]))
+    if NAME in variables and NAME not in found and other:
+        found[NAME] = other.pop(0)  # a list written before `name:`: the first field that is no variable is the name
+    for field in other:  # a typo like "hgih" must not silently do nothing
+        log.warning("sources/x.md: unknown option %r on %s is ignored (use %s)",
+                    field, where, ", ".join(f"{v}:" for v in variables))
+    return found
+
+
+def source_options(source: Source) -> list[str]:
+    """What a source sets beyond the defaults, the way sources/x.md writes it (`priority:high`): for `xmd sources`."""
+    def word(variable: str, meant: bool) -> str:
+        return next(w for w, value in _VALUES[variable].items() if value is meant)
+
+    said = [f"{PRIORITY}:{word(PRIORITY, True)}"] if source.priority else []
+    if not source.reposts:
+        said.append(f"{REPOSTS}:{word(REPOSTS, False)}")
+    return said + [f"{variable}:{', '.join(words)}" for variable, words in ((ONLY, source.only), (HIDE, source.hide)) if words]
 
 
 def _read_md_list(path: Path) -> list[dict]:
-    """Read sources/x.md: one handle per line, optional `| Display Name`,
-    `#` comments, blank lines ignored.
+    """Read sources/x.md: one handle per line, `//` comments (`#` ones too, see _COMMENT_MARKS), blank lines
+    ignored. What a line says beyond its handle is written `variable:value` in `|` fields, in any order: the
+    variables and the values they take are the table above.
 
     - `## group` headers partition entries into interest groups, each
-      becoming its own section in the rendered markdown. `## group | recap`
+      becoming its own section in the rendered markdown. `recap:on` on one
       marks a recap group: the quick digest collapses it to its global
       picture instead of listing every tweet.
-    - `## group | high` or `| low` says how much of the group the LLM brief keeps: a high
-      group gets more detail, a low one is condensed harder; no level means normal, which
-      can also be written `| normal`, `| medium` or `| regular`. The first level named wins.
-      A recap group is always the lowest, so a level written on it (`## chat | recap | low`)
+    - `level:high` or `level:low` on a header says how much of the group the LLM brief keeps: a
+      high group gets more detail, a low one is condensed harder; no level means normal.
+      A recap group is always the lowest, so a level written on it (`## chat | recap:on | level:low`)
       is accepted and means nothing.
-    - a third `| priority` field marks a source as high-priority: its items
-      sort first within their section, ahead of non-priority sources. A
-      legacy `focus:`/`aim:` line (from the old RSS4.0 format, back when an
-      LLM recap read them) is tolerated and skipped.
+    - `priority:high` on a handle marks a high-priority source: its items sort first within
+      their section, ahead of non-priority sources. `reposts:off`, `only: a, b` and
+      `hide: a, b` are a source's filters (see Source, and ingest/filters.py). On a header they
+      are the group's: `reposts` holds for each of its handles that does not say otherwise, the
+      keywords are added to each handle's own.
+    - a list written before `variable:value` still loads: a bare `priority`, `rp_off`, `recap`,
+      `high` or `low` in a field (see _BARE_WORDS), and the first field that is no variable at
+      all is the display name. A legacy `focus:`/`aim:` line (from the old RSS4.0 format, back
+      when an LLM recap read them) is tolerated and skipped.
 
         alice
 
-        ## finance
-        NewsFrank | Frank Wire | priority
-        gina_alerts
+        ## finance | level:high | hide:presale
+        NewsFrank | name:Frank Wire | priority:high
+        gina_alerts | reposts:off | only:airdrop, "#alpha"
 
     Header detection runs before `#` comment stripping so `##` is never
     eaten as a comment.
     """
     entries: list[dict] = []
     group = ""
-    recap = False
-    level = "normal"
+    of_group: dict = {}  # what the header of the current group set
     # utf-8-sig: Windows editors add a BOM that would poison the first entry
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if stripped.startswith("##"):
-            name, *options = (p.strip() for p in stripped.lstrip("#").split("|"))
-            group = name.lower()
-            recap = any(o.lower() == "recap" for o in options)
-            words = [o.lower() for o in options if o]
-            level = next((LEVEL_WORDS[w] for w in words if w in LEVEL_WORDS), "normal")
-            for word in words:
-                if word not in _HEADER_OPTIONS:  # a typo like "hgih" must not silently mean normal
-                    log.warning("sources/x.md: unknown option %r on group %r is ignored (use high, normal, low or recap)",
-                                word, group)
+            # a `#` comment is cut from the options only: the group's name is left as written, `#` included
+            name, _, options = _split(stripped.lstrip("#"), "//")[0].partition("|")
+            group = name.strip().lower()
+            of_group = _read_fields(_split(_split(options, "#")[0], "|"), _GROUP_VARIABLES, f"group {group!r}")
             continue
-        line = line.split("#", 1)[0].strip()
+        line = _uncomment(line).strip()
         if not line or line.lower().startswith(_LEGACY_AIM_PREFIXES):
             continue
-        parts = [p.strip() for p in line.split("|")]
-        handle, name = parts[0].lstrip("@"), (parts[1] if len(parts) > 1 else "")
-        priority = len(parts) > 2 and parts[2].strip().lower() == "priority"
-        entries.append(
-            {"handle": handle, "name": name, "group": group, "priority": priority, "recap": recap, "level": level}
-        )
+        parts = _split(line, "|")
+        handle = parts[0].strip().lstrip("@")
+        said = _read_fields(parts[1:], _HANDLE_VARIABLES, f"@{handle}")
+        entries.append({
+            "handle": handle, "name": said.get(NAME, ""), "group": group, "priority": said.get(PRIORITY, False),
+            "reposts": said.get(REPOSTS, of_group.get(REPOSTS, True)),
+            "only": of_group.get(ONLY, ()) + said.get(ONLY, ()), "hide": of_group.get(HIDE, ()) + said.get(HIDE, ()),
+            "recap": of_group.get(RECAP, False), "level": of_group.get(LEVEL, "normal"),
+        })
     return entries
 
 
@@ -279,7 +385,7 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         sources.append(Source(
             name=entry["name"] or f"@{handle}", type="twitterapi",
             handle=handle, platform="x", group=entry["group"],
-            priority=entry["priority"],
+            priority=entry["priority"], reposts=entry["reposts"], only=entry["only"], hide=entry["hide"],
         ))
     if not sources:
         raise ValueError(f"no sources found — add handles to {x_md}")

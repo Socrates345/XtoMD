@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import __version__
-from .core.config import Config, Source, load_config
+from .core.config import Config, Source, load_config, source_options
 from .digest.export import build_export
 from .ingest.fetcher import FetchResult, fetch_all
 from .core.models import FeedItem, FetchReport
@@ -331,8 +331,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "sources":
         for s in config.sources:
             group = f" [{s.group}]" if s.group else ""
-            priority = " (priority)" if s.priority else ""
-            print(f"{s.name} -> @{s.handle}{group}{priority}")
+            options = source_options(s)
+            listed = f" ({' | '.join(options)})" if options else ""
+            print(f"{s.name} -> @{s.handle}{group}{listed}")
         return
 
     if args.command == "fetch":

@@ -3,11 +3,11 @@
 The rules are the reader's own, not a ranking — every tweet is treated the
 same except where a rule below says otherwise. First match wins:
 
-- priority: from a `| priority` source, or the first post of a poster who had
+- priority: from a `priority:high` source, or the first post of a poster who had
             been silent for more than SILENCE_DAYS (a plain retweet doesn't
             count, a retweet with the poster's own comment does); always shown
             in full
-- recap:    from a group marked `| recap` in sources/x.md; collapsed to the
+- recap:    from a group marked `recap:on` in sources/x.md; collapsed to the
             global picture, nothing per-tweet
 - media:    has images; kept whole, since a text model can't see an image and
             a meme's point may not survive being paraphrased

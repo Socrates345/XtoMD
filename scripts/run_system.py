@@ -216,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                          f"(default: ${EXTRA_BODY_ENV_VAR}; docs/remote.md has Venice's)")
     ap.add_argument("--export", default="", help="export .txt to brief (default: the newest in DIGESTS/.export)")
     ap.add_argument("--digests-dir", default="digests")
-    ap.add_argument("--sources-dir", default="sources", help="where x.md is: its `## group | high` / `| low` levels set how much each group keeps")
+    ap.add_argument("--sources-dir", default="sources", help="where x.md is: its `## group | level:high` / `level:low` set how much each group keeps")
     ap.add_argument("--config", default="sources.yaml",
                     help="sources.yaml: its `language:` says which languages the summaries may keep and which one the rest is written in")
     ap.add_argument("--out-dir", default="", help="where runs are saved (default: DIGESTS/.runs)")

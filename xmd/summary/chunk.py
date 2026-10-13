@@ -24,9 +24,9 @@ from ..core.tiers import RECAP, REGULAR, RETWEET
 BAND = dict(_BANDS)  # tier -> the export's heading for it ("retweet" -> "retweets")
 TIER_ORDER = (REGULAR, RETWEET, RECAP)
 
-# How important a group is (sources/x.md: `## business | high`) scales how much of its tier's share of
+# How important a group is (sources/x.md: `## business | level:high`) scales how much of its tier's share of
 # words is kept. Chunks are made most important first. A recap group is always the lowest, so it has no
-# level: one written on it (`| recap | low`) is ignored, and its share is what THEME_SHARES says.
+# level: one written on it (`recap:on | level:low`) is ignored, and its share is what THEME_SHARES says.
 LEVEL_ORDER = ("high", "normal", "low")
 LEVEL_FACTORS = {"high": 1.5, "normal": 1.0, "low": 0.5}
 

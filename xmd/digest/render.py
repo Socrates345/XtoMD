@@ -16,7 +16,7 @@ renders in VS Code / GitHub and in Obsidian's Reading view; Obsidian's Live
 Preview doesn't render `<details>` at all and shows the source instead — the
 known limit of a `<details>` toggle (an Obsidian `> [!info]-` callout is the
 alternative that folds in both of its views, but VS Code can't fold it).
-`| priority` sources sort first within both the normal and retweet bands —
+`priority:high` sources sort first within both the normal and retweet bands —
 looked up live by source name against sources/x.md at render time (not
 stored on the item), so re-marking a source as priority reorders even
 already-fetched tweets on the next digest, no re-fetch required. A stats

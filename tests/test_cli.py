@@ -497,6 +497,24 @@ def test_main_names_only_the_export_when_neither_digest_is_asked_for(tmp_path, m
     assert len(out) == 1 and out[0].startswith("export: ")
 
 
+def test_sources_lists_each_handle_with_its_group_and_its_options(monkeypatch, capsys):
+    from xmd import cli as cli_module
+
+    config = Config(sources=[
+        Source(name="Carol", type="twitterapi", handle="carol", group="crypto", priority=True, reposts=False),
+        Source(name="@jumper", type="twitterapi", handle="jumper", only=("airdrop", "points"), hide=("#ad",)),
+        Source(name="@dave", type="twitterapi", handle="dave"),
+    ])
+    monkeypatch.setattr(cli_module, "load_config", lambda path: config)
+
+    cli_module.main(["sources"])
+    assert capsys.readouterr().out.splitlines() == [
+        "Carol -> @carol [crypto] (priority:high | reposts:off)",
+        "@jumper -> @jumper (only:airdrop, points | hide:#ad)",
+        "@dave -> @dave",
+    ]
+
+
 def test_a_fetch_whose_output_is_not_a_terminal_still_says_where_it_is(tmp_path, monkeypatch, capsys):
     from xmd import cli as cli_module
 
