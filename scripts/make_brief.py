@@ -8,14 +8,16 @@
 
 You must choose the window: `--since-last-run` covers what was fetched since your previous digest, so it is
 a short brief when that was recent; `--24h` covers everything published in the last 24 hours, whatever was
-digested before. Either one moves the since-run cursor, as any `xmd digest` does.
+digested before. Either one moves the since-run cursor, but only once its brief is written: a run that stops
+before leaves the cursor where it was, so the next `--since-last-run` brief still covers its posts.
 
 The one thing it cannot do for you is LM Studio. It checks the server first and, if it is not answering, says
-what to open and waits: the moment the server is up it carries on by itself. It checks before it fetches
-because a digest moves the since-run cursor: none is made for a brief that could not be written.
+what to open and waits: the moment the server is up it carries on by itself. It checks before it fetches, so
+that nothing is fetched or digested for a brief that could not be written.
 
 If it stops after the digest (LM Studio went away), the export is kept: run `run_system.py` and then
-`assemble_brief.py` to finish, as the message says. Run it from the repo root, like the other scripts.
+`assemble_brief.py` to finish, as the message says (the next `--since-last-run` brief then repeats those posts).
+Run it from the repo root, like the other scripts.
 
 Away from the laptop the model is a hosted one (docs/remote.md): `--base-url`, `--model` and `--extra-body`, or
 `XMD_LLM_BASE_URL`, `XMD_LLM_MODEL` and `XMD_LLM_EXTRA_BODY` in the environment, name it. A server that is not on
@@ -150,10 +152,16 @@ def main(argv: list[str] | None = None) -> int:
         cli.main(["--config", args.config, "fetch"])
 
     print(f"\n[3/5] digest, {WINDOW_WORDS[args.window]}")
+    since = cli.digest_cursor(config)
     export = cli.run_digest(config, args.window, full=args.full, quick=args.quick)
     if export is None:
         print("no brief to make.")
         return 0
+    # The digest moved the since-run cursor. It goes back where it was until this digest's brief exists: a run that
+    # stops before (the model server went away, the machine was restarted) leaves its posts to the next "since" brief.
+    digested = cli.digest_cursor(config)
+    if since:
+        cli.set_digest_cursor(config, since)
 
     print("\n[4/5] summarize")
     before = _runs(digests / ".runs")
@@ -173,10 +181,13 @@ def main(argv: list[str] | None = None) -> int:
         print("\nsome chunks failed: assembling anyway, their posts appear as one-liners under 'Not summarized'.")
 
     print("\n[5/5] assemble")
-    return max(code, assemble_brief.main([
+    assembled = assemble_brief.main([
         "--run", new[-1], "--digests-dir", str(digests), "--config", args.config,
         *(["--api-key", args.api_key] if args.api_key else []),
-    ]))
+    ])
+    if not assembled and digested:  # the brief is written: "since" now starts after its digest
+        cli.set_digest_cursor(config, digested)
+    return max(code, assembled)
 
 
 if __name__ == "__main__":

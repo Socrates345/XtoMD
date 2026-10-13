@@ -200,6 +200,25 @@ def write_digest(
     return out_path
 
 
+def digest_cursor(config: Config) -> str | None:
+    """Where `since-run` starts: when the previous digest was made (None before the first one)."""
+    store = Store(config.storage)
+    try:
+        return store.get_meta("last_digest_at")
+    finally:
+        store.close()
+
+
+def set_digest_cursor(config: Config, at: str) -> None:
+    """Put the since-run cursor at `at`, a value `digest_cursor` gave: scripts/make_brief.py keeps it where it was
+    until the brief of a digest exists."""
+    store = Store(config.storage)
+    try:
+        store.set_meta("last_digest_at", at)
+    finally:
+        store.close()
+
+
 def run_digest(config: Config, window: str, full: bool = False, quick: bool = False) -> Path | None:
     """`xmd digest`: make the digest, say where each file went, and return the export the brief is made
     from (None when the window was empty and nothing was written)."""

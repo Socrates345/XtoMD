@@ -4,7 +4,7 @@
 #   bash deploy/termux/setup.sh
 #
 # Installs what the pipeline needs, makes the virtual environment, asks for access to the phone's files, and
-# puts three buttons in Termux:Widget's list. Safe to run again, after a `git pull` for instance.
+# puts its buttons in Termux:Widget's list. Safe to run again, after a `git pull` for instance.
 # docs/remote-setup.md has the steps around it (.env, the SSH key, the widget).
 set -euo pipefail
 
@@ -67,6 +67,7 @@ done
 shortcut download-latest-daily-brief "$repo/deploy/termux/vps.sh" pull
 shortcut generate-last-24h-brief "$repo/deploy/termux/vps.sh" run 24h
 shortcut generate-last-24h-brief-10min-read "$repo/deploy/termux/vps.sh" run 24h 10
+shortcut generate-since-last-brief "$repo/deploy/termux/vps.sh" run since
 
 if [[ ! -f .env ]]; then
     cp deploy/env.example .env

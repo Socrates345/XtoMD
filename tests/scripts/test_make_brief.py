@@ -12,6 +12,8 @@ import make_brief  # noqa: E402
 from xmd.core.config import Config, Source  # noqa: E402
 from xmd.summary.engine import EngineError  # noqa: E402
 
+BEFORE, DIGESTED = "2026-09-20T10:00:00+00:00", "2026-09-21T10:00:00+00:00"  # the since-run cursor, and where a digest puts it
+
 
 class World:
     """Stands in for LM Studio, the fetch, the digest and the two scripts, and records what make_brief asks of each."""
@@ -27,13 +29,15 @@ class World:
         self.digests = tmp_path / "digests"
         self.export: Path | None = self.digests / ".export" / "2026-09-21-1000.txt"
         self.run_code = 0
+        self.assemble_code = 0
         self.writes_run = True
+        self.cursor_during_run: str | None = None  # where the since-run cursor was while the model was at work
         self.runs_made = 0
         self.warmup_extra_body: dict | None = None  # what the warm-up call was told to add to its request
         for var in ("XMD_LLM_BASE_URL", "XMD_LLM_MODEL", "XMD_LLM_EXTRA_BODY"):  # the tester's own, if any
             monkeypatch.delenv(var, raising=False)
-        config = Config(sources=[Source(name="@alice", type="twitterapi", handle="alice")], x_api_key="k",
-                        storage=tmp_path / "t.db", digest_dir=self.digests)
+        config = self.config = Config(sources=[Source(name="@alice", type="twitterapi", handle="alice")], x_api_key="k",
+                                      storage=tmp_path / "t.db", digest_dir=self.digests)
         monkeypatch.setattr(make_brief, "load_config", lambda path: config)
         monkeypatch.setattr(make_brief, "list_models", self._list_models)
         monkeypatch.setattr(make_brief, "Engine", self._engine)
@@ -74,10 +78,12 @@ class World:
 
     def _digest(self, config, window, full=False, quick=False):
         self.calls.append(("digest", window, full, quick))
+        make_brief.cli.set_digest_cursor(config, DIGESTED)  # as every digest does, an empty one too
         return self.export
 
     def _run_system(self, argv):
         self.calls.append(("run_system", argv))
+        self.cursor_during_run = self.cursor
         if self.writes_run:
             self.runs_made += 1
             run = self.digests / ".runs" / f"run-{self.runs_made}"
@@ -87,7 +93,11 @@ class World:
 
     def _assemble(self, argv):
         self.calls.append(("assemble", argv))
-        return 0
+        return self.assemble_code
+
+    @property
+    def cursor(self) -> str | None:
+        return make_brief.cli.digest_cursor(self.config)
 
     @property
     def steps(self) -> list[str]:
@@ -299,6 +309,38 @@ def test_a_model_step_that_never_ran_is_not_assembled_and_the_retry_is_explained
     assert "assemble" not in world.steps  # the newest run would be an old one
     out = capsys.readouterr().out
     assert "run_system.py --model qwen/qwen3.5-9b" in out and "assemble_brief.py" in out
+
+
+@pytest.mark.parametrize("window", ["--24h", "--since-last-run"])
+def test_the_since_run_cursor_moves_to_the_digest_only_once_its_brief_is_written(monkeypatch, tmp_path, window):
+    world = World(monkeypatch, tmp_path)
+    make_brief.cli.set_digest_cursor(world.config, BEFORE)
+
+    assert make_brief.main([window]) == 0
+    assert world.cursor_during_run == BEFORE  # a run cut short here would leave it there
+    assert world.cursor == DIGESTED
+
+
+@pytest.mark.parametrize("stops_at", ["summarize", "assemble"])
+def test_a_run_that_stops_before_its_brief_leaves_its_posts_to_the_next_since_run_brief(monkeypatch, tmp_path, stops_at):
+    world = World(monkeypatch, tmp_path)
+    make_brief.cli.set_digest_cursor(world.config, BEFORE)
+    if stops_at == "summarize":
+        world.writes_run, world.run_code = False, 1
+    else:
+        world.assemble_code = 1
+
+    assert make_brief.main(["--24h"]) == 1
+    assert world.cursor == BEFORE
+
+
+def test_an_empty_window_has_no_brief_to_wait_for_and_the_cursor_moves(monkeypatch, tmp_path):
+    world = World(monkeypatch, tmp_path)
+    make_brief.cli.set_digest_cursor(world.config, BEFORE)
+    world.export = None
+
+    assert make_brief.main(["--since-last-run"]) == 0
+    assert world.cursor == DIGESTED
 
 
 def test_failed_chunks_still_get_a_brief_but_the_exit_code_says_so(monkeypatch, tmp_path):

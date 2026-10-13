@@ -325,7 +325,7 @@ def test_the_phone_says_how_to_ask_when_asked_for_something_else(repo, tmp_path)
 FORMER_BUTTONS = ["brief-vps-24h", "brief-vps-10min", "brief-vps-latest", "brief-phone-24h", "brief-phone-10min"]
 
 
-def test_setup_leaves_three_buttons_that_ask_the_vps_and_clears_its_former_ones_and_no_other(repo, tmp_path):
+def test_setup_leaves_four_buttons_that_ask_the_vps_and_clears_its_former_ones_and_no_other(repo, tmp_path):
     home = repo.parent  # what _run gives the scripts as $HOME
     (home / "storage" / "shared").mkdir(parents=True)  # access to the phone's files: given already
     shortcuts = home / ".shortcuts"
@@ -344,8 +344,9 @@ def test_setup_leaves_three_buttons_that_ask_the_vps_and_clears_its_former_ones_
     done = _run(repo, "termux/setup.sh", PREFIX=str(prefix), PATH=path)
 
     assert done.returncode == 0, done.stderr
-    buttons = ["download-latest-daily-brief", "generate-last-24h-brief", "generate-last-24h-brief-10min-read"]
+    buttons = ["download-latest-daily-brief", "generate-last-24h-brief", "generate-last-24h-brief-10min-read",
+               "generate-since-last-brief"]
     assert sorted(p.name for p in shortcuts.iterdir()) == [*buttons, "my-own-button"]
     for button in buttons:
         subprocess.run(["bash", str(shortcuts / button)], check=True, timeout=60)
-    assert _asked(repo) == ["pull", "run 24h", "run 24h 10"]
+    assert _asked(repo) == ["pull", "run 24h", "run 24h 10", "run since"]

@@ -4,7 +4,7 @@
 # is relied on, a Windows checkout keeps neither.
 #
 #   bash deploy/brief.sh 24h        everything published in the last 24 hours
-#   bash deploy/brief.sh since      only what is new since this machine's last digest
+#   bash deploy/brief.sh since      only what is new since the last brief this machine made
 #   bash deploy/brief.sh 24h 10     the same, fitted to a 10-minute read
 #
 # The settings (which model server, the keys, where to copy the brief) come from .env at the repo root, never

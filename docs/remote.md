@@ -62,8 +62,8 @@ scripts/make_brief.py                                                |
 
 Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 days of history. They are not synchronized, and nothing breaks when they drift:
 
-- `24h` covers the last 24 hours by publication date, whatever any cursor says. The timer and all the buttons use it.
-- `since` means "since **this machine's** last digest".
+- `24h` covers the last 24 hours by publication date, whatever any cursor says. The timer and the `24h` buttons use it.
+- `since` covers what **this machine** fetched since the last brief it made, whichever window that brief had. A run that stopped before its brief was written does not count: its posts wait for the next `since` brief. That is the brief to ask for after the timer's run failed (`generate-since-last-brief`): a `24h` one made hours later also starts hours later, and the posts in between would be in no brief.
 - A new machine starts with an empty database: **Louder than usual** and the silence-based priority fill in over the first two weeks, unless you copy `xmd.db` over once.
 
 ## Files
@@ -133,7 +133,7 @@ set -a; . ./.env; set +a
 
 ```bash
 bash deploy/brief.sh 24h        # everything published in the last 24 hours
-bash deploy/brief.sh since      # only what is new since this machine's last digest
+bash deploy/brief.sh since      # only what is new since the last brief this machine made
 bash deploy/brief.sh 24h 10     # fitted to a 10-minute read (any number of minutes)
 ```
 
@@ -164,6 +164,7 @@ bash deploy/termux/phone.sh 24h 10       # ... fitted to a 10-minute read
 | `download-latest-daily-brief` | `vps.sh pull`: the timer's daily brief |
 | `generate-last-24h-brief` | `vps.sh run 24h` |
 | `generate-last-24h-brief-10min-read` | `vps.sh run 24h 10` |
+| `generate-since-last-brief` | `vps.sh run since`: what is new since the last brief the VPS made |
 
 **On the VPS, as root:**
 

@@ -4,6 +4,7 @@
 #
 #   bash deploy/termux/vps.sh run 24h       make one now, then download it
 #   bash deploy/termux/vps.sh run 24h 10    ... fitted to a 10-minute read
+#   bash deploy/termux/vps.sh run since     only what is new since the last brief the VPS made
 #   bash deploy/termux/vps.sh pull          download the briefs of the last day (the timer's daily one)
 #   bash deploy/termux/vps.sh pull 7        ... of the last 7 days
 #

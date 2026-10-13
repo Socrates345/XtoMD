@@ -38,7 +38,7 @@ python scripts\run_headless.py --since-last-run  # or: only what's new since you
 python scripts\run_headless.py --24h --time 10   # short on time: a brief you can read in ~10 minutes
 ```
 
-`run_headless.py` starts LM Studio's server, loads the model, fetches, digests, summarizes and assembles the brief, then stops the server again — the GUI never needs to open. `--24h` is everything published in the last 24 hours; `--since-last-run` is only what was fetched since your previous digest, so it's short when that was recent. Either one moves the since-run cursor; you choose the window every time, there's no default. `--time MIN` fits the brief to a reading time (see [Reading time](#reading-time)); without it the brief is as long as the day was.
+`run_headless.py` starts LM Studio's server, loads the model, fetches, digests, summarizes and assembles the brief, then stops the server again — the GUI never needs to open. `--24h` is everything published in the last 24 hours; `--since-last-run` is only what was fetched since your previous digest, so it's short when that was recent. Either one moves the since-run cursor, once its brief is written (a run that stops before leaves its posts to the next `--since-last-run` brief); you choose the window every time, there's no default. `--time MIN` fits the brief to a reading time (see [Reading time](#reading-time)); without it the brief is as long as the day was.
 
 **Prefer to manage LM Studio's server yourself** (Developer tab, GUI open)? `make_brief.py` takes the same flags and writes the same output, it just expects the server already running:
 
