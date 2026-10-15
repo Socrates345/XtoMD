@@ -40,7 +40,7 @@ MEDIA = [i for i in ITEMS if i.images]
 
 def _build(cuts=None):
     records = [{"chunk": "c", "tier": "regular", "ids": [p.n for p in POSTS], "ok": True, "reply": {"items": []}}]
-    return build_brief(ITEMS, NOW, records, MAPPING, {p.n: p.text for p in POSTS}, REPEATED,
+    return build_brief(ITEMS, NOW, records, MAPPING, REPEATED,
                        priority_sources=PRIORITY, levels=LEVELS, cuts=cuts)
 
 

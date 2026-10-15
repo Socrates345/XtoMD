@@ -3,14 +3,15 @@
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python="$repo/.venv/bin/python"
 
-# `digest_dir:` in sources.yaml (digests/ unless you changed it), as given there: a path from the repo root
+# `digest_dir:` in sources.yaml (digests/ unless you changed it), as given there: a path from the repo root. Read on
+# its own, without the keys: ssh-entry.sh has not read .env, which may hold the X backend's key
 digests_dir() {
     (cd "$repo" && "$python" -c '
 import sys
-from xmd.core.config import load_config
+from xmd.core.config import read_digest_dir
 try:
-    print(load_config("sources.yaml").digest_dir)
-except (FileNotFoundError, ValueError) as exc:  # as make_brief.py says it: one line, no traceback
+    print(read_digest_dir("sources.yaml"))
+except ValueError as exc:  # as make_brief.py says it: one line, no traceback
     sys.exit(f"config error: {exc}")
 ')
 }

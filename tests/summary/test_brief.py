@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from xmd.summary.brief import (
-    Cuts, brief_stamp, build_brief, digest_item_ids, digest_time, load_item_ids, load_run, measure, reading_minutes,
-    shown_minutes, window_kind,
+    Cuts, brief_stamp, build_brief, digest_item_ids, load_item_ids, load_run, measure, reading_minutes, shown_minutes,
+    window_kind,
 )
 from xmd.summary.chunk import MAX_THEME_IDS, parse_export
 from xmd.digest.export import build_export
@@ -41,8 +41,6 @@ ITEMS = [
     _post(10, "@s1", "a new paint set was released", group="arts & crafts"),
 ]
 EXPORT_TEXT, MAPPING = build_export(ITEMS, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
-POSTS, _ = parse_export(EXPORT_TEXT, MAPPING)
-POST_TEXT = {p.n: p.text for p in POSTS}
 NUM = {m["url"]: int(n) for n, m in MAPPING.items()}
 
 
@@ -75,7 +73,7 @@ RECORDS = [
 
 def _brief(records=RECORDS, repeated=(), **kw):
     return build_brief(
-        ITEMS, NOW, records, MAPPING, POST_TEXT, list(repeated), priority_sources=PRIORITY, recap_groups=RECAP,
+        ITEMS, NOW, records, MAPPING, list(repeated), priority_sources=PRIORITY, recap_groups=RECAP,
         levels=LEVELS, full_name="full.md", model_line="test model", **kw,
     )
 
@@ -97,7 +95,7 @@ def test_a_priority_tweet_is_shown_whole_but_its_text_cannot_inject_markup():
         1, "@vip", "look ![](https://tracker.example/p.gif) [x](https://phish.example) <img src=https://t.example/x.png>",
         retweet_of_author="mal_lory", retweet_of_text="![](https://tracker.example/q.gif) [[a private note]]",
     )
-    lines = build_brief([hostile], NOW, [], {}, {}, [], priority_sources=PRIORITY).markdown.splitlines()
+    lines = build_brief([hostile], NOW, [], {}, [], priority_sources=PRIORITY).markdown.splitlines()
     body = next(ln for ln in lines if "p.gif" in ln)
     quoted = next(ln for ln in lines if ln.startswith("🔁 Retweeted"))
     assert "![](" not in body and "<img" not in body
@@ -183,7 +181,7 @@ def test_a_recap_groups_image_tweets_are_shown_whole_above_its_themes_and_never_
     items = ITEMS + [_post(11, "@c3", "a chart of the chatter", group="chat", images=["https://img.example/11.jpg"])]
     text, mapping = build_export(items, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
     assert "a chart of the chatter" not in text and len(mapping) == len(MAPPING)
-    md = build_brief(items, NOW, RECORDS, MAPPING, POST_TEXT, [], priority_sources=PRIORITY, recap_groups=RECAP,
+    md = build_brief(items, NOW, RECORDS, MAPPING, [], priority_sources=PRIORITY, recap_groups=RECAP,
                      levels=LEVELS).markdown
     recap = md[md.index("## X / chat"):]
     assert recap.index("### 🖼 Images — 1") < recap.index("![](https://img.example/11.jpg)") < recap.index("### Recap")
@@ -195,9 +193,9 @@ def test_a_story_of_a_recap_groups_posts_and_its_image_tweets_stays_in_the_group
     story = "the moderators announced a brand new weekly community challenge for everyone tonight"
     chat = [_post(1, "@c1", story, group="chat"), _post(2, "@c2", story + " soon", group="chat", images=["https://img.example/2.jpg"]),
             _post(3, "@c3", story + " details", group="chat", images=["https://img.example/3.jpg"])]
-    md = build_brief(chat, NOW, [], {}, {}, [], recap_groups=RECAP).markdown
+    md = build_brief(chat, NOW, [], {}, [], recap_groups=RECAP).markdown
     assert "## Trending" not in md and "**Repeated in this group — 1**" in md
-    alone = build_brief(chat[1:], NOW, [], {}, {}, [], recap_groups=RECAP).markdown  # nothing left to collapse
+    alone = build_brief(chat[1:], NOW, [], {}, [], recap_groups=RECAP).markdown  # nothing left to collapse
     assert "## Trending" not in alone and "**Repeated in this group — 1**" in alone and "Recap group:" not in alone
 
 
@@ -211,7 +209,7 @@ def test_a_recap_theme_links_a_few_of_its_posts_with_a_sources_posts_together():
     cited = [ids[0], ids[1], ids[6], *ids[2:6]]  # @c1 twice, @c2, @c1 again; the model left the last post out
     theme = {"headline": "Chatter", "detail": "Everyone posted", "ids": cited}
     records = [{"chunk": "recap-01", "tier": "recap", "level": "normal", "ids": ids, "ok": True, "reply": {"items": [theme]}}]
-    md = build_brief(chat, NOW, records, mapping, {p.n: p.text for p in posts}, [], recap_groups=RECAP).markdown
+    md = build_brief(chat, NOW, records, mapping, [], recap_groups=RECAP).markdown
     line = next(l for l in md.splitlines() if l.startswith("- **Chatter**"))
     assert line.count("](https://x.com/") == MAX_THEME_IDS and line.endswith(f" +{len(cited) - MAX_THEME_IDS})")
     assert "[@c1](https://x.com/c1/status/20) [2](https://x.com/c1/status/21) [3](https://x.com/c1/status/22)" in line
@@ -271,7 +269,7 @@ def test_the_reading_time_is_lines_at_the_readers_pace_plus_the_pictures_and_the
 def test_a_tweet_shown_on_several_lines_counts_every_line_the_reader_meets():
     tweet = _post(59, "@vip", "my own comment", group="business", retweet_of_author="orig", retweet_of_text="the post quoted")
     _text, mapping = build_export([tweet], NOW, priority_sources=PRIORITY, recap_groups=RECAP)
-    brief = build_brief([tweet], NOW, [], mapping, {}, [], priority_sources=PRIORITY, recap_groups=RECAP)
+    brief = build_brief([tweet], NOW, [], mapping, [], priority_sources=PRIORITY, recap_groups=RECAP)
     written = [line for line in brief.markdown.splitlines() if line.strip()]
     assert "my own comment" in written and any("the post quoted" in line for line in written)  # a line each
     assert brief.stats["lines"] == len(written) - 1  # all but the reading-time line, filled in after the count
@@ -289,7 +287,7 @@ def test_a_bigger_brief_reports_a_bigger_number_of_minutes():
               for k in range(90)]  # 90 pictures alone are 6 minutes at 4 seconds each
     items = ITEMS + tweets
     _text, mapping = build_export(items, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
-    brief = build_brief(items, NOW, [], mapping, {}, [], priority_sources=PRIORITY, recap_groups=RECAP, full_name="full.md")
+    brief = build_brief(items, NOW, [], mapping, [], priority_sources=PRIORITY, recap_groups=RECAP, full_name="full.md")
     minutes = int(brief.markdown.splitlines()[2].split("~")[1].split(" ")[0])
     assert minutes >= 10 and minutes == shown_minutes(brief.stats["minutes_at_your_pace"])
 
@@ -319,17 +317,11 @@ def test_a_digests_item_ids_come_from_its_items_file_or_else_from_its_full_diges
 
 def test_the_brief_links_no_full_digest_when_there_is_none():
     md = build_brief(
-        ITEMS, NOW, RECORDS, MAPPING, POST_TEXT, [], priority_sources=PRIORITY, recap_groups=RECAP,
+        ITEMS, NOW, RECORDS, MAPPING, [], priority_sources=PRIORITY, recap_groups=RECAP,
         levels=LEVELS, full_name="", model_line="test model",
     ).markdown
     assert md.splitlines()[2].startswith("**~") and md.splitlines()[2].endswith(" min read**")  # no `· [full digest]`
     assert "full digest" not in md  # not in the recap note either
-
-
-def test_a_digests_time_comes_from_its_file_name_the_end_of_a_frozen_window_or_a_plain_stamp():
-    assert digest_time("2026-09-20-1156") == datetime(2026, 9, 20, 11, 56, tzinfo=timezone.utc)
-    assert digest_time("frozen-2026-09-18-1600--2026-09-19-1600") == datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
-    assert digest_time("no stamp") is None
 
 
 def test_window_kind_reads_the_labelled_export_header_or_says_neither():
@@ -370,7 +362,7 @@ def test_a_saved_run_is_loaded_with_its_records_in_run_order(tmp_path):
 
 @pytest.mark.parametrize("levels", [{}, {"business": "low", "news": "high"}])
 def test_the_order_of_sections_follows_whatever_levels_the_run_used(levels):
-    md = build_brief(ITEMS, NOW, RECORDS, MAPPING, POST_TEXT, [], priority_sources=PRIORITY, recap_groups=RECAP,
+    md = build_brief(ITEMS, NOW, RECORDS, MAPPING, [], priority_sources=PRIORITY, recap_groups=RECAP,
                      levels=levels).markdown
     headings = _headings(md)
     assert headings[0] == "## ★ Priority" and headings[-1] == "## X / chat"
@@ -383,7 +375,7 @@ def _images_band(images_per_tweet):
     items = [_post(20 + k, f"@p{k}", f"caption number {k}", group="business",
                    images=[f"https://img.example/{k}-{j}.jpg" for j in range(n)]) for k, n in enumerate(images_per_tweet)]
     _text, mapping = build_export(items, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
-    md = build_brief(items, NOW, [], mapping, {}, [], priority_sources=PRIORITY, recap_groups=RECAP, levels=LEVELS).markdown
+    md = build_brief(items, NOW, [], mapping, [], priority_sources=PRIORITY, recap_groups=RECAP, levels=LEVELS).markdown
     lines = md.splitlines()
     start = next(k for k, line in enumerate(lines) if line.startswith("### 🖼 Images"))
     stop = next((k for k in range(start + 1, len(lines)) if lines[k].startswith(("### ", "---", "<a id="))), len(lines))
@@ -431,7 +423,7 @@ def test_a_priority_tweet_shows_its_pictures_first_with_a_blank_line_after_each_
     tweet = _post(30, "@vip", "the priority caption", group="finance", images=["https://img.example/a.jpg", "https://img.example/b.jpg"])
     items = [tweet]
     _text, mapping = build_export(items, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
-    md = build_brief(items, NOW, [], mapping, {}, [], priority_sources=PRIORITY, recap_groups=RECAP).markdown
+    md = build_brief(items, NOW, [], mapping, [], priority_sources=PRIORITY, recap_groups=RECAP).markdown
     lines = md.splitlines()
     heading = next(k for k, line in enumerate(lines) if line.startswith("#### @vip"))
     assert lines[heading + 2] == "![](https://img.example/a.jpg)" and lines[heading + 3] == ""
@@ -449,7 +441,7 @@ SHARED = [
 
 
 def test_a_post_several_priority_tweets_retweet_comes_first_in_the_brief_once_with_their_comments():
-    md = build_brief(SHARED, NOW, [], {}, {}, [], priority_sources=VIPS).markdown
+    md = build_brief(SHARED, NOW, [], {}, [], priority_sources=VIPS).markdown
     priority = md.split("## ★ Priority\n\n", 1)[1].split("## Trending", 1)[0]
     assert priority.startswith("#### 🔁 @desk — retweeted 2 times\n\n![](https://img.example/r.jpg)\n\n"
                                f"{RETWEETED}\n\n- **@vip3** <!-- item:")  # pictures first, as for any priority tweet
@@ -460,7 +452,7 @@ def test_a_post_several_priority_tweets_retweet_comes_first_in_the_brief_once_wi
 
 
 def test_cut_to_one_liners_a_retweeted_post_is_one_line_with_its_comments_indented_under_it():
-    md = build_brief(SHARED, NOW, [], {}, {}, [], priority_sources=VIPS, cuts=Cuts(priority_one_liners=True)).markdown
+    md = build_brief(SHARED, NOW, [], {}, [], priority_sources=VIPS, cuts=Cuts(priority_one_liners=True)).markdown
     lines = md.split("## ★ Priority\n\n", 1)[1].splitlines()[2:6]
     assert lines[0] == f"- 🔁 **@desk** — retweeted 2 times · {RETWEETED}"
     assert lines[1].startswith("  - **@vip3** <!-- item:") and lines[1].endswith("Huge if true [↗](https://x.com/vip3/status/42)")
@@ -470,7 +462,7 @@ def test_cut_to_one_liners_a_retweeted_post_is_one_line_with_its_comments_indent
 
 def test_a_priority_tweet_heading_escapes_underscores_in_the_handle():
     tweet = _post(31, "@v_ip_", "text", group="finance")
-    md = build_brief([tweet], NOW, [], {}, {}, [], priority_sources=frozenset({"@v_ip_"})).markdown
+    md = build_brief([tweet], NOW, [], {}, [], priority_sources=frozenset({"@v_ip_"})).markdown
     assert f"#### @v\\_ip\\_ <!-- item:{tweet.id} --> [Post Link](https://x.com/v_ip_/status/31)" in md
 
 

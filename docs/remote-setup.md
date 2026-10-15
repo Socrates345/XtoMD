@@ -1,4 +1,4 @@
-/# Setup: the brief from a VPS and from the phone
+# Setup: the brief from a VPS and from the phone
 
 Step-by-step instructions. What this installs and how it works is in **[remote.md](remote.md)**; its [Troubleshooting](remote.md#troubleshooting) table covers the error messages you may meet here.
 
@@ -8,7 +8,7 @@ Do the parts in order. Each ends with a **Check**: don't go on until it passes. 
 | --- | --- | --- |
 | [0. Laptop](#0-on-the-laptop-first) | Laptop | The code pushed, ready to be cloned |
 | [1. Venice](#1-venice) | Browser | An API key for the hosted model |
-| [2. VPS](#2-the-vps) | The server | A brief every day at 18:00 |
+| [2. VPS](#2-the-vps) | The server | A brief every day, at the hour set in `OnCalendar=` |
 | [3. Phone](#3-the-phone) | Termux on the Pixel | Buttons to fetch a brief, or ask for one |
 | [4. Phone alone](#4-the-phone-alone-optional) | Termux on the Pixel | A brief with no VPS at all |
 
@@ -31,16 +31,16 @@ python scripts\run_headless.py --smoke
 
 **Check:** three `OK` lines, as before the update.
 
-**0.2 Commit and push the update.** The VPS and the phone get the code with `git clone`, so it has to be on your remote. The work is on the branch `remote`; until you merge it into `main`, the other machines clone that branch.
+**0.2 Commit and push the update.** The VPS and the phone get the code with `git clone`, so it has to be on your remote's `main`.
 
 ```powershell
 git status                      # look first: only what you mean to publish
 git add -A
 git commit -m "brief without the laptop: VPS and phone"
-git push -u origin remote
+git push origin main
 ```
 
-**Check:** the branch `remote` on your Git host shows the `deploy/` folder.
+**Check:** `main` on your Git host shows the `deploy/` folder.
 
 **0.3 Have an SSH key.** If `Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub` prints nothing, make one:
 
@@ -101,7 +101,7 @@ Some providers give you a user such as `debian` or `ubuntu` instead of root. The
 From the laptop, `ssh xmd@VPS_ADDRESS`, then:
 
 ```bash
-git clone -b remote REPO_URL XtoMD        # drop "-b remote" once the branch is merged into main
+git clone REPO_URL XtoMD
 cd XtoMD
 python3 -m venv .venv && .venv/bin/pip install -e .
 ```
@@ -111,7 +111,7 @@ If the repository is private, give the server a read-only key first:
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/id_deploy -N ""
 cat ~/.ssh/id_deploy.pub        # GitHub: the repository > Settings > Deploy keys > Add (leave write access off)
-GIT_SSH_COMMAND='ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes' git clone -b remote git@github.com:OWNER/XtoMD.git XtoMD
+GIT_SSH_COMMAND='ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes' git clone git@github.com:OWNER/XtoMD.git XtoMD
 cd XtoMD && git config core.sshCommand 'ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes'   # so "git pull" works later
 ```
 
@@ -199,14 +199,14 @@ In Termux:
 ```bash
 pkg upgrade -y
 pkg install -y git
-git clone -b remote REPO_URL XtoMD        # a private repository: a deploy key of its own, as in step 2.3
+git clone REPO_URL XtoMD        # a private repository: a deploy key of its own, as in step 2.3
 cd XtoMD
 bash deploy/termux/setup.sh
 ```
 
-`setup.sh` installs Python and SSH, asks Android for access to your files (allow it), makes the virtual environment, creates `.env` from the template and creates the five buttons. It is safe to run again.
+`setup.sh` installs Python and SSH, asks Android for access to your files (allow it), makes the virtual environment, creates `.env` from the template and creates the four buttons. It is safe to run again.
 
-**Check:** it lists five names starting with `brief-` and then says `done.`; under "access to the phone's files" it says `ok: briefs go to Documents/xmd-briefs`. If Android showed no question, access had been given before: the script then says `already allowed`.
+**Check:** it lists four names, the buttons [remote.md](remote.md#commands) describes, and then says `done.`; under "access to the phone's files" it says `ok: briefs go to Documents/xmd-briefs`. If Android showed no question, access had been given before: the script then says `already allowed`.
 
 To check the install again at any time, run the script again (`cd ~/XtoMD && bash deploy/termux/setup.sh`): it changes nothing that is already in place and stops with a message at the first thing that is missing.
 
@@ -269,18 +269,11 @@ ssh xmd-vps ls                      # must be refused: "allowed: run 24h|since [
 
 ### 3.4 The buttons
 
-Long-press the home screen > Widgets > **Termux:Widget**, and drop the list on the home screen.
-
-| Button | Does |
-| --- | --- |
-| `brief-vps-latest` | Downloads the briefs the VPS made in the last day: the daily one |
-| `brief-vps-24h` | Asks the VPS for a brief of the last 24 hours now, then downloads it |
-| `brief-vps-10min` | The same, fitted to a 10-minute read |
-| `brief-phone-24h`, `brief-phone-10min` | Make the brief on the phone itself: part 4 |
+Long-press the home screen > Widgets > **Termux:Widget**, and drop the list on the home screen. What each button runs is in [remote.md](remote.md#commands) (**The buttons**).
 
 Briefs land in `Documents/xmd-briefs`. To send them elsewhere, set `XMD_BRIEF_DEST` in `~/XtoMD/.env`, for instance to a folder inside your vault if the vault is in the phone's shared storage (nothing then checks the file on its way in).
 
-**Check:** tap `brief-vps-latest`. A terminal opens, lists the brief, and the Files app shows it in `Documents/xmd-briefs`.
+**Check:** tap `download-latest-daily-brief`. A terminal opens, lists the brief, and the Files app shows it in `Documents/xmd-briefs`.
 
 ## 4. The phone alone (optional)
 
@@ -306,25 +299,28 @@ set -a; . ./.env; set +a
 
 (The second line loads `.env` into the shell, as in step 2.4.)
 
-**Check:** three `OK` lines, then tap `brief-phone-24h`: it ends with `written to ...` and `copied ... to .../xmd-briefs`.
+**Check:** three `OK` lines, then `bash deploy/termux/phone.sh 24h` ends with `written to ...` and `copied ... to .../xmd-briefs`.
 
-The phone has its own database, so prefer the `24h` buttons here: `since` would mean "since the phone's last digest", not the VPS's.
+The phone has its own database, so prefer `24h` here: `since` would mean "since the phone's last digest", not the VPS's.
 
 **A daily run on the phone** is possible but not dependable: Android decides when background work runs and may delay or skip it. If you want it anyway, install the **Termux:API** app from F-Droid, then:
 
 ```bash
 pkg install -y termux-api
-termux-job-scheduler --job-id 1 --script ~/.shortcuts/brief-phone-24h --period-ms 86400000 --network any --persisted true
+printf '#!%s/bin/bash\nexec bash ~/XtoMD/deploy/termux/phone.sh 24h\n' "$PREFIX" > ~/xmd-phone-24h && chmod 700 ~/xmd-phone-24h
+termux-job-scheduler --job-id 1 --script ~/xmd-phone-24h --period-ms 86400000 --network any --persisted true
 ```
+
+The second line writes the script the job runs. It stays outside `~/.shortcuts`, so it adds no button.
 
 `termux-job-scheduler --help` lists the options; `termux-job-scheduler --cancel --job-id 1` removes it.
 
 ## Done: what a day looks like
 
-- At 18:00 the VPS makes the brief by itself.
-- When you want to read: tap `brief-vps-latest`, then open the file from `Documents/xmd-briefs` (or move it into the vault).
-- When you want one now, or shorter: `brief-vps-24h` or `brief-vps-10min`. It takes several minutes. If the phone loses the connection meanwhile, the VPS finishes the brief anyway: tap `brief-vps-latest` a little later.
-- If the VPS is down: `brief-phone-24h`, once part 4 is done.
+- At the hour set in `OnCalendar=` (`xmd-brief.timer`), the VPS makes the brief by itself.
+- When you want to read: tap `download-latest-daily-brief`, then open the file from `Documents/xmd-briefs` (or move it into the vault).
+- When you want one now, or shorter: `generate-last-24h-brief` or `generate-last-24h-brief-10min-read` (after a missed daily run, `generate-since-last-brief`). It takes several minutes. If the phone loses the connection meanwhile, the VPS finishes the brief anyway: tap `download-latest-daily-brief` a little later.
+- If the VPS is down: `bash deploy/termux/phone.sh 24h`, once part 4 is done.
 - At home, the laptop works as before. Its briefs and the VPS's are independent.
 
 Keeping it running (changing the hour, revoking the phone) is in [remote.md](remote.md#running-it-day-to-day). After each `git push` from the laptop, bring the VPS and the phone up to date: [Updating the code](remote.md#updating-the-code).

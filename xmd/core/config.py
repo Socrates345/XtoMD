@@ -28,6 +28,8 @@ X_BACKENDS = ("twitterapi", "tweetapi")
 
 # the clock the brief's file name and header are read in (stored times and digest stamps stay UTC)
 DEFAULT_TIMEZONE = "Europe/Paris"
+# where the digests, the exports, the runs and the briefs go when `digest_dir:` names no folder
+DEFAULT_DIGEST_DIR = "digests"
 
 # languages `language:` in sources.yaml may name, by ISO 639-1 code or English name. The code is what the model is
 # asked to tag a post with, the name is what it is told to write in.
@@ -92,7 +94,7 @@ class Config:
     tweetapi_api_key: str = ""  # tweetapi.com API key
     tweetapi_rate_limit_per_minute: int = 10  # tweetapi.com's request cap (free tier); raise to 60 on the paid plan
     storage: Path = field(default_factory=lambda: Path("xmd.db"))
-    digest_dir: Path = field(default_factory=lambda: Path("digests"))
+    digest_dir: Path = field(default_factory=lambda: Path(DEFAULT_DIGEST_DIR))
     tz: ZoneInfo = field(default_factory=lambda: ZoneInfo(DEFAULT_TIMEZONE))  # `timezone:` in sources.yaml
     language: Language | None = None  # `language:` in sources.yaml; None = every post stays in its own language
 
@@ -105,7 +107,7 @@ _LEGACY_AIM_PREFIXES = ("focus:", "aim:")
 
 # The variables of sources/x.md, written `variable:value` in the `|` fields after a handle or a group's name. Their
 # names and the words their values take are spelled here and nowhere else in the code: to rename one, change it
-# here, then where the docs and the tests quote it (README.md, sources.example/x.md, tests/core/test_config.py).
+# here, then where the docs and the tests quote it (docs/usage.md, sources.example/x.md, tests/core/test_config.py).
 NAME = "name"  # a handle: the name shown instead of @handle
 PRIORITY = "priority"  # a handle: `high` = its tweets sort first and are shown in full
 REPOSTS = "reposts"  # a handle or a group: `off` = its plain retweets are dropped at fetch
@@ -349,6 +351,13 @@ def read_language(path: str | Path = "sources.yaml") -> Language | None:
     return _language(_read_yaml(path), path) if path.exists() else None
 
 
+def read_digest_dir(path: str | Path = "sources.yaml") -> Path:
+    """`digest_dir:` from a sources.yaml, and nothing else: deploy/common.sh needs the folder where .env has not been
+    read, so without the api key or the follow list load_config insists on. A missing file means the default."""
+    path = Path(path)
+    return _path_setting(_read_yaml(path) if path.exists() else {}, "digest_dir", DEFAULT_DIGEST_DIR, path)
+
+
 def load_config(path: str | Path = "sources.yaml") -> Config:
     path = Path(path)
     if not path.exists():
@@ -426,7 +435,7 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
         tweetapi_api_key=tweetapi_api_key,
         tweetapi_rate_limit_per_minute=tweetapi_rate_limit_per_minute,
         storage=_path_setting(raw, "storage", "xmd.db", path),
-        digest_dir=_path_setting(raw, "digest_dir", "digests", path),
+        digest_dir=_path_setting(raw, "digest_dir", DEFAULT_DIGEST_DIR, path),
         tz=tz,
         language=_language(raw, path),
     )

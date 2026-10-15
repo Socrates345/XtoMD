@@ -37,7 +37,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
 from xmd.summary.brief import (  # noqa: E402
-    brief_stamp, build_brief, digest_items, load_item_ids, load_run, shown_minutes, summary_items, window_kind,
+    LINES_PER_MINUTE, SECONDS_PER_IMAGE, WPM_DIAGONAL, WPM_NORMAL, brief_stamp, build_brief, digest_items,
+    load_item_ids, load_run, shown_minutes, summary_items, window_kind,
 )
 from xmd.summary.chunk import parse_export  # noqa: E402
 from xmd.core.config import Language, load_config  # noqa: E402
@@ -127,11 +128,15 @@ def main(argv: list[str] | None = None) -> int:
 
     export = digests / ".export" / manifest["export"]["file"]
     stem = export.stem
+    if not export.exists() or not export.with_suffix(".map.json").exists():
+        print(f"{export} or its .map.json is missing: it holds the posts this run summarized, and the brief is "
+              "assembled from them")
+        return 1
     if _sha(export) != manifest["export"]["sha256"]:
         print(f"WARNING: {export.name} is not the export this run read (hash differs)")
     mapping = json.loads(export.with_suffix(".map.json").read_text(encoding="utf-8"))
     export_text = export.read_text(encoding="utf-8")
-    posts, repeated = parse_export(export_text, mapping)
+    _posts, repeated = parse_export(export_text, mapping)
     full = digests / f"{stem}.md"
     ids = load_item_ids(export, full)
     if ids is None:
@@ -151,11 +156,10 @@ def main(argv: list[str] | None = None) -> int:
 
     engine, compression = manifest["engine"], compression_label(manifest)
     levels = manifest.get("levels") or {}
-    post_text = {p.n: p.text for p in posts}
     topics = topics_by_section(items, usage_baseline(history))
 
     summaries: dict[str, str] = {}
-    kept, _dropped, _repeats = summary_items(records, mapping, post_text, repeated, levels, config.recap_groups)
+    kept, _dropped, _repeats = summary_items(records, mapping, repeated, levels, config.recap_groups)
     inputs = section_inputs(kept, mapping, topics)
     if inputs and not args.no_summaries:
         system = load_section_prompt(language=config.language)
@@ -175,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def build(translated=None, cuts=None):
         return build_brief(
-            items, now, records, mapping, post_text, repeated,
+            items, now, records, mapping, repeated,
             priority_sources=frozenset(s.name for s in config.sources if s.priority),
             recap_groups=config.recap_groups,
             levels=levels,
@@ -229,9 +233,9 @@ def main(argv: list[str] | None = None) -> int:
     if s["regular_posts"]:
         print(f"regular posts cited by a summary: {s['regular_posts_cited']} of {s['regular_posts']}; "
               f"posts without any summary (failed or not run): {s['posts_without_summary']}")
-    print(f"\nreading time: ~{shown_minutes(s['minutes_at_your_pace'])} min at your pace (40 lines a minute, 4 s per "
-          f"image); by words: ~{shown_minutes(s['minutes_normal'])} min at 230 wpm, "
-          f"~{shown_minutes(s['minutes_diagonal'])} min at 400 wpm")
+    print(f"\nreading time: ~{shown_minutes(s['minutes_at_your_pace'])} min at your pace ({LINES_PER_MINUTE} lines a "
+          f"minute, {SECONDS_PER_IMAGE} s per image); by words: ~{shown_minutes(s['minutes_normal'])} min at "
+          f"{WPM_NORMAL} wpm, ~{shown_minutes(s['minutes_diagonal'])} min at {WPM_DIAGONAL} wpm")
     if minutes:
         if cuts is None:
             print(f"time {minutes:g} min: the whole brief fits, nothing cut")

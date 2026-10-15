@@ -135,11 +135,11 @@ def _fit_compression(minutes: float, export: Path, digests: Path, config_path: s
         return None
     items, _history = digest_items(ids, config.storage)
     no_summaries = [{"chunk": "plan", "tier": "regular", "ids": [p.n for p in posts], "ok": True, "reply": {"items": []}}]
-    now, post_text = datetime.now(timezone.utc), {p.n: p.text for p in posts}
+    now = datetime.now(timezone.utc)
 
     def build(cuts=None):
         return build_brief(
-            items, now, no_summaries, mapping, post_text, repeated,
+            items, now, no_summaries, mapping, repeated,
             priority_sources=frozenset(s.name for s in config.sources if s.priority), recap_groups=config.recap_groups,
             levels=levels, similarity=config.trending_similarity, snippet_chars=config.snippet_chars,
             retweet_chars=config.retweet_chars, media_chars=config.media_chars, cuts=cuts,
@@ -203,8 +203,8 @@ def main(argv: list[str] | None = None) -> int:
                            "unless they alone would take more than half of it, and assemble_brief.py cuts image and "
                            "priority tweets to fit it")
     size.add_argument("--compression", type=_compression, default=DEFAULT_COMPRESSION, metavar="RATIO",
-                    help="summary words / source words for the regular posts: 0.30 or 30%% (the default) keeps about 30%% "
-                         "of their words, 0.10 about 10%%. Retweets and the recap group keep their own fixed shares")
+                    help="summary words / source words for the regular posts, as 0.30 or 30%% (default: %(default)s): "
+                         "0.10 keeps about 10%% of their words. Retweets and the recap group keep their own fixed shares")
     ap.add_argument("--model", default=os.environ.get(MODEL_ENV_VAR, ""),
                     help=f"model id, or part of one; omit it when the server offers just one (default: ${MODEL_ENV_VAR})")
     ap.add_argument("--base-url", default=os.environ.get(BASE_URL_ENV_VAR) or DEFAULT_BASE_URL,

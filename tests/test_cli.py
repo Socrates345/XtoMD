@@ -626,19 +626,24 @@ def test_a_fetch_deletes_the_exports_and_runs_written_too_long_ago(tmp_path, mon
     _fetch_that_answers(monkeypatch, FetchResult([]))
     config = _config(tmp_path)
     export, runs = config.digest_dir / ".export", config.digest_dir / ".runs"
-    files = (export / "old.txt", export / "new.txt", runs / "old" / "run.json", runs / "new" / "run.json",
-             runs / "reassembled" / "run.json", runs / "reassembled" / "sections.json", config.digest_dir / "old.md")
+    files = (export / "old.txt", export / "old.map.json", export / "new.txt", export / "used.txt",
+             export / "used.map.json", export / "used.items.json", runs / "reassembled" / "sections.json",
+             config.digest_dir / "old.md")
     for path in files:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}", encoding="utf-8")
+    for run, made_from in (("old", "old.txt"), ("new", "new.txt"), ("reassembled", "used.txt")):
+        (runs / run).mkdir(parents=True, exist_ok=True)
+        (runs / run / "run.json").write_text(json.dumps({"export": {"file": made_from}}), encoding="utf-8")
     old = time.time() - (EXPORT_KEEP_DAYS + 1) * 86400
-    for path in (export / "old.txt", runs / "old" / "run.json", runs / "old", runs / "reassembled" / "run.json",
-                 config.digest_dir / "old.md"):
+    for path in (*(p for p in export.iterdir() if p.name != "new.txt"), runs / "old" / "run.json", runs / "old",
+                 runs / "reassembled" / "run.json", config.digest_dir / "old.md"):
         os.utime(path, (old, old))
 
     asyncio.run(_fetch_to_store(config))
-    assert sorted(p.name for p in export.iterdir()) == ["new.txt"]
     assert sorted(p.name for p in runs.iterdir()) == ["new", "reassembled"]  # its sections were written since
+    # and the export it is assembled from stays with it, however old; the old run's goes with that run
+    assert sorted(p.name for p in export.iterdir()) == ["new.txt", "used.items.json", "used.map.json", "used.txt"]
     assert (config.digest_dir / "old.md").exists()  # a digest or a brief is the reader's to delete
 
 

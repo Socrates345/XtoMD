@@ -76,12 +76,12 @@ def _thread_root(tweet: dict) -> str:
 
 def _added_comment(tweet: dict, retweet_of_author: str, retweet_of_text: str = "") -> str:
     """The retweeter's own added comment — empty for a bare retweet.
-    twitterapi.io doesn't distinguish a bare retweet from a quote-tweet: both
-    wrap the original under `retweeted_tweet`, and a bare retweet's own
-    `text` field is X's auto-generated, truncated "RT @author: text…" echo of
-    the original — or, as seen in stored data, the original's text itself —
-    not real commentary. Only text that *isn't* such an echo is treated as an
-    actual added comment."""
+    A quote tweet's `text` is its comment (the quoted post is under
+    `quoted_tweet`, see _retweet_of), but a bare retweet's own `text` field is
+    X's auto-generated, truncated "RT @author: text…" echo of the original —
+    or, as seen in stored data, the original's text itself — not real
+    commentary. Only text that *isn't* such an echo is treated as an actual
+    added comment."""
     if not retweet_of_author:
         return ""
     raw = " ".join(str(tweet.get("text", "")).split())

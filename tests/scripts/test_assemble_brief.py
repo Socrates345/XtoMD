@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -24,6 +25,21 @@ def test_a_brief_never_replaces_an_earlier_one(tmp_path):
     second.write_text("the 10% brief", encoding="utf-8")
     assert assemble_brief._unused(first).name == "2026-09-29-8pm-24h-brief-3.md"
     assert first.read_text(encoding="utf-8") == "the 30% brief"
+
+
+def test_a_run_whose_export_is_gone_says_so_instead_of_a_traceback(tmp_path, capsys):
+    (tmp_path / "sources").mkdir()
+    (tmp_path / "sources" / "x.md").write_text("dave\n", encoding="utf-8")
+    (tmp_path / "sources.yaml").write_text("x:\n  api_key: test-key\n", encoding="utf-8")
+    run = tmp_path / "digests" / ".runs" / "old-run"
+    run.mkdir(parents=True)
+    (run / "run.json").write_text(json.dumps({"export": {"file": "2026-09-29-1600.txt", "sha256": "0"}, "chunks": []}),
+                                  encoding="utf-8")
+
+    code = assemble_brief.main(["--run", "old-run", "--digests-dir", str(tmp_path / "digests"),
+                                "--config", str(tmp_path / "sources.yaml")])
+    assert code == 1
+    assert "2026-09-29-1600.txt or its .map.json is missing" in capsys.readouterr().out
 
 
 def test_the_calls_made_here_go_to_the_runs_own_server_with_the_runs_own_extra_body():

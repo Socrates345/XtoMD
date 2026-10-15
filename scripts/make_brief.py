@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     new = sorted(_runs(digests / ".runs") - before)
     if not new:  # nothing was run (the server went away): run_system said why
         print(f"\nthe digest is made ({export.name}) but the model step did not finish. To retry from there:\n"
-              f"  python scripts\\run_system.py --model {model}\n  python scripts\\assemble_brief.py")
+              f"  python scripts/run_system.py --model {model}\n  python scripts/assemble_brief.py")
         return code or 1
     if code:
         print("\nsome chunks failed: assembling anyway, their posts appear as one-liners under 'Not summarized'.")

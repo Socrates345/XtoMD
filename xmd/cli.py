@@ -150,18 +150,24 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
 
 
 def _forget_files(digest_dir: Path, before: datetime) -> None:
-    """Delete each export file and run folder last written before `before`. A run folder's age is its newest file:
-    re-assembling a run (its section summaries, its translations) keeps it. What cannot be deleted now (a file open
-    elsewhere) is left for the next fetch."""
+    """Delete each run folder and export file last written before `before`. A run folder's age is its newest file:
+    re-assembling a run (its section summaries, its translations) keeps it, and with it the export it was made from,
+    which assembling reads. What cannot be deleted now (a file open elsewhere) is left for the next fetch."""
     cutoff = before.timestamp()
-    for folder in (digest_dir / EXPORT_DIRNAME, digest_dir / RUNS_DIRNAME):
+    runs, exports = digest_dir / RUNS_DIRNAME, digest_dir / EXPORT_DIRNAME
+    needed: set[str] = set()  # the stems of the exports the runs kept were made from
+    for folder in (runs, exports):  # the runs first: they say which exports stay
         if not folder.is_dir():
             continue
         for entry in folder.iterdir():
             try:
+                if folder == exports and entry.name.split(".", 1)[0] in needed:
+                    continue
                 tree = entry.is_dir() and not entry.is_symlink()
                 stamps = [p.stat().st_mtime for p in entry.rglob("*")] if tree else []
                 if max(stamps, default=entry.lstat().st_mtime) >= cutoff:
+                    if folder == runs and (stem := _export_stem(entry)):
+                        needed.add(stem)
                     continue
                 if tree:
                     shutil.rmtree(entry)
@@ -169,6 +175,14 @@ def _forget_files(digest_dir: Path, before: datetime) -> None:
                     entry.unlink()
             except OSError:
                 pass
+
+
+def _export_stem(run: Path) -> str:
+    """The stem of the export a run folder was made from (`export.file` in its run.json), "" when it does not say."""
+    try:
+        return Path(json.loads((run / "run.json").read_text(encoding="utf-8"))["export"]["file"]).stem
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
 
 
 def _digest(config: Config, window: str, full: bool = False, quick: bool = False) -> Path | None:

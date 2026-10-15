@@ -12,8 +12,8 @@ What the model wrote is never taken on trust:
   real source is dropped with them;
 - an item repeating an earlier one of its chunk (the model looping: same headline, or
   in a looping reply the same cited posts) is dropped;
-- an item whose numbers, handles or tickers are in none of its cited posts is kept but
-  marked with a warning, naming them;
+- an item whose numbers, handles or tickers are in none of its cited posts is kept as
+  it is, unmarked: scripts/run_stats.py counts those;
 - a chunk that failed, or was never run, falls back to the quick digest's one-liners
   for its posts, and says so.
 
@@ -61,7 +61,6 @@ MAX_CITES = 4  # links shown per item; the rest are counted (a recap theme has i
 PRIORITY_LINE_CHARS = 280  # a priority tweet cut to one line (see Cuts) keeps about a tweet's worth
 
 _ITEM_ID = re.compile(r"<!-- item:([0-9a-f]+) -->")
-_STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})-(\d{4})")
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _TAG = re.compile(r"<[^>\n]*>")
@@ -170,16 +169,6 @@ def digest_items(ids: list[str], storage: Path, history_days: int = 0) -> tuple[
     return items, history
 
 
-def digest_time(stem: str) -> datetime | None:
-    """When a digest was made, read from its file name (`2026-09-20-1156`, or the end of a frozen window's
-    `frozen-2026-09-18-1600--2026-09-19-1600`); None if the name has no stamp."""
-    found = _STAMP.findall(stem)
-    if not found:
-        return None
-    day, hhmm = found[-1]
-    return datetime.strptime(day + hhmm, "%Y-%m-%d%H%M").replace(tzinfo=timezone.utc)
-
-
 _WINDOW_LABEL = {"past 24h": "24h", "since last run": "lastrun"}
 
 
@@ -225,8 +214,8 @@ def _section_of(ids: list[int], mapping: dict, levels: dict, recap_groups: froze
 
 
 def summary_items(
-    records: list[dict], mapping: dict, post_text: dict[int, str], repeated: list[tuple[int, ...]],
-    levels: dict[str, str], recap_groups: frozenset[str],
+    records: list[dict], mapping: dict, repeated: list[tuple[int, ...]], levels: dict[str, str],
+    recap_groups: frozenset[str],
 ) -> tuple[list[BriefItem], int, int]:
     """(the checked items of every chunk that worked, how many were dropped for having no real source, how many
     for repeating an earlier item of their chunk: the model looping, which on 2026-10-15 padded 6 stories out to
@@ -415,7 +404,6 @@ def build_brief(
     now: datetime,
     records: list[dict],
     mapping: dict[str, dict],
-    post_text: dict[int, str],
     repeated: list[tuple[int, ...]],
     *,
     priority_sources: frozenset[str] = frozenset(),
@@ -433,8 +421,8 @@ def build_brief(
     cuts: Cuts | None = None,
     fetch_report: FetchReport | None = None,
 ) -> Brief:
-    """The brief for the window's `items`, from a run's chunk `records` (see load_run). `mapping`, `post_text`
-    and `repeated` come from the frozen export the run read; `levels` are the group levels the run used.
+    """The brief for the window's `items`, from a run's chunk `records` (see load_run). `mapping` and `repeated`
+    come from the frozen export the run read; `levels` are the group levels the run used.
     `topics` and `summaries` (section label -> ...) open the sections they belong to, when given. `translated`
     is asked about every text the brief shows word for word (see translate.py): what it translates is shown
     translated, the original quoted under it. `cuts` says what to leave out to fit a reading time."""
@@ -442,7 +430,7 @@ def build_brief(
     topics, summaries = topics or {}, summaries or {}
     by_url = {i.url: i for i in items}
     tiers = {i.id: tier_of(i, priority_sources, recap_groups) for i in items}
-    kept, dropped, repeats = summary_items(records, mapping, post_text, repeated, levels, recap_groups)
+    kept, dropped, repeats = summary_items(records, mapping, repeated, levels, recap_groups)
     cuts = cuts or Cuts()
     words = Counter()  # by band, for the report
     band_minutes: Counter = Counter()  # by band, at the reader's pace: what a reading time is fitted with
@@ -630,8 +618,3 @@ def _fitted_note(cuts: Cuts, items: list[FeedItem], tiers: dict[str, str]) -> st
     if cuts.priority_one_liners:
         parts.append("priority tweets as one-liners")
     return f" · fitted to {cuts.minutes:g} min" + (f": {', '.join(parts)}" if parts else "")
-
-
-def _filed_of(filed: dict[tuple[str, str], list[BriefItem]], tier: str) -> list[BriefItem]:
-    """Every item of one tier, whatever section it is filed under."""
-    return [i for (_section, t), group in filed.items() if t == tier for i in group]

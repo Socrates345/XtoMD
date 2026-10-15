@@ -281,6 +281,11 @@ def test_the_page_guard_stops_a_handle_whose_window_never_ends(monkeypatch, capl
     assert "@someone" in caplog.text and "page guard" in caplog.text
 
 
+@pytest.mark.parametrize("created", ["2026-07-08T06:00:00.000Z", "2026-07-08T06:00:00Z"])
+def test_a_tweet_s_time_is_read_with_or_without_its_milliseconds(created):
+    assert tweetapi_adapter._published({"createdAt": created}) == datetime(2026, 7, 8, 6, 0, tzinfo=timezone.utc)
+
+
 def test_the_page_guard_never_cuts_below_what_an_explicit_item_ceiling_needs(monkeypatch):
     pages = [_page(k * 20, next_cursor=f"p{k + 1}") for k in range(29)] + [_page(580)]  # 30 pages, 600 tweets
     calls = _fake_calls(monkeypatch, [_by_username(), *pages])

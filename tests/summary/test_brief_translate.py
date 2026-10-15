@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from xmd.core.models import FeedItem
 from xmd.digest.export import build_export
 from xmd.summary.brief import build_brief
-from xmd.summary.chunk import parse_export
 from xmd.summary.translate import Translation
 
 NOW = datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
@@ -29,12 +28,11 @@ ITEMS = [
     _post(4, "@r1", DE, group="business", retweet_of_author="bank", retweet_of_text=DE),  # a plain retweet
 ]
 EXPORT_TEXT, MAPPING = build_export(ITEMS, NOW, priority_sources=PRIORITY)
-POSTS, _ = parse_export(EXPORT_TEXT, MAPPING)
 TRANSLATIONS = {ZH: Translation("zh", ZH_EN), DE: Translation("de", DE_EN, ("12",))}
 
 
 def _brief(translated):
-    return build_brief(ITEMS, NOW, [], MAPPING, {p.n: p.text for p in POSTS}, [], priority_sources=PRIORITY,
+    return build_brief(ITEMS, NOW, [], MAPPING, [], priority_sources=PRIORITY,
                        translated=translated).markdown
 
 
@@ -68,9 +66,8 @@ def test_a_translated_image_caption_and_one_liner_keep_the_original_and_the_warn
 def test_a_translated_trending_story_keeps_its_original_quoted_under_it():
     story = "Die Zentralbank senkt heute überraschend die Leitzinsen um einen halben Punkt"
     items = ITEMS + [_post(5, "@d1", story, group="news"), _post(6, "@d2", story, group="news")]
-    export, mapping = build_export(items, NOW, priority_sources=PRIORITY)
-    posts, _ = parse_export(export, mapping)
-    md = build_brief(items, NOW, [], mapping, {p.n: p.text for p in posts}, [], priority_sources=PRIORITY,
+    _export, mapping = build_export(items, NOW, priority_sources=PRIORITY)
+    md = build_brief(items, NOW, [], mapping, [], priority_sources=PRIORITY,
                      translated={story: Translation("de", "The central bank surprises with a half-point cut")}.get
                      ).markdown
     trending = md.split("## Trending", 1)[1].split("## X /", 1)[0]
@@ -82,7 +79,7 @@ def test_a_post_several_priority_tweets_retweet_and_their_comments_are_translate
         _post(1, "@vip", "", group="finance", retweet_of_author="bank", retweet_of_text=ZH),
         _post(2, "@vip2", DE, group="finance", retweet_of_author="bank", retweet_of_text=ZH),
     ]
-    md = build_brief(items, NOW, [], {}, {}, [], priority_sources=frozenset({"@vip", "@vip2"}),
+    md = build_brief(items, NOW, [], {}, [], priority_sources=frozenset({"@vip", "@vip2"}),
                      translated=TRANSLATIONS.get).markdown
     priority = md.split("## ★ Priority", 1)[1].split("## Trending", 1)[0]
     assert f"\n\n{ZH_EN}\n\n> 🌐 *Chinese:* {ZH}\n\n- **@vip2**" in priority

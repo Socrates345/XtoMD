@@ -2,7 +2,7 @@ import traceback
 
 import pytest
 
-from xmd.core.config import Language, load_config, read_group_levels, read_language
+from xmd.core.config import Language, load_config, read_digest_dir, read_group_levels, read_language
 
 X_KEY_YAML = "x:\n  api_key: test-key\n"
 
@@ -324,6 +324,16 @@ def test_a_path_setting_left_empty_means_its_default(tmp_path):
 def test_a_path_setting_that_is_not_text_is_a_config_error(tmp_path):
     with pytest.raises(ValueError, match="`storage:` must be a path, not a list"):
         load_config(_setup(tmp_path, yaml_text=X_KEY_YAML + "storage:\n  - xmd.db\n"))
+
+
+def test_the_digest_folder_is_read_without_the_api_key_or_the_follow_list(tmp_path):
+    path = tmp_path / "sources.yaml"  # the key in .env, which deploy/vps/ssh-entry.sh never reads; no sources/x.md
+    path.write_text("x:\n  backend: tweetapi\ndigest_dir: briefs\n", encoding="utf-8")
+    assert str(read_digest_dir(path)) == "briefs"
+    assert str(read_digest_dir(tmp_path / "missing.yaml")) == "digests"
+    path.write_text("x: [\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid YAML"):
+        read_digest_dir(path)
 
 
 def test_no_sources_gives_actionable_error(tmp_path):

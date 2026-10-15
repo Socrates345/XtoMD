@@ -175,13 +175,16 @@ def _images(tweet: dict) -> list[str]:
 
 
 def _published(tweet: dict) -> datetime | None:
+    """`createdAt`, seen live with milliseconds; the spec's date-time may also come without them."""
     raw = tweet.get("createdAt")
     if not raw:
         return None
-    try:
-        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
+    for layout in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(raw, layout).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def _url(tweet: dict, handle: str) -> str:

@@ -20,7 +20,7 @@ The laptop is unchanged. Its commands, its LM Studio setup and its brief are wha
 ```text
 VPS, always on                                      Phone (Termux)
 ----------------------------------------------      ---------------------------------
-xmd-brief.timer    every day at 18:00
+xmd-brief.timer    daily, at its OnCalendar= hour
       |
       v
 deploy/brief.sh  <---  deploy/vps/ssh-entry.sh  <--- SSH ---  button: generate-last-24h-brief
@@ -249,6 +249,7 @@ systemctl daemon-reload
 - **Your settings are never touched.** `.env`, `sources.yaml`, `sources/`, `digests/` and `xmd.db` are git-ignored.
 - **`git pull` refuses because of "local changes":** a tracked file was edited on the VPS; `git status` names it. `git restore FILE` drops that edit, then pull again.
 - **The phone** updates the same way: `git pull` in `~/XtoMD` inside Termux, then `bash deploy/termux/setup.sh` again when the buttons changed.
+- **A clone made from the `remote` branch** (before it was merged into `main`) keeps pulling that branch. Switch it once, as `xmd` on the VPS and in Termux on the phone: `git fetch origin && git switch main`.
 
 ## Limits
 
