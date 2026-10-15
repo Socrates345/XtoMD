@@ -58,17 +58,20 @@ def test_a_reading_time_is_minutes_with_or_without_the_unit():
 LINES = lambda c: round(800 * c)  # 240 lines of summaries at 0.30: 6 minutes; 80 at 0.10: 2 minutes
 
 
+USUAL = LINES(MAX_COMPRESSION) / 40  # minutes of summaries at the usual compression, 6 at most
+
+
 def test_the_compression_is_the_usual_one_when_the_whole_brief_fits():
-    sizing = choose_compression(30, 20, 3, LINES)  # 20 minutes of tweets and 6 of summaries
-    assert (sizing.compression, sizing.whole_minutes, sizing.summary_minutes) == (MAX_COMPRESSION, 26, 6)
+    sizing = choose_compression(30, 20, 3, LINES)  # 20 minutes of tweets and the summaries
+    assert (sizing.compression, sizing.whole_minutes, sizing.summary_minutes) == (MAX_COMPRESSION, 20 + USUAL, USUAL)
     assert sizing.fits
 
 
 def test_a_brief_too_long_keeps_the_usual_compression_while_its_summaries_take_no_more_than_half_the_time():
-    # 26 minutes for 20, or for 12: the image tweets are cut, not the summaries
+    # 26 minutes at most for 20, or for 12: the image tweets are cut, not the summaries
     assert choose_compression(20, 20, 3, LINES).compression == MAX_COMPRESSION
     assert choose_compression(12, 20, 3, LINES).compression == MAX_COMPRESSION
-    assert choose_compression(12, 20, 3, LINES).whole_minutes == 26
+    assert choose_compression(12, 20, 3, LINES).whole_minutes == 20 + USUAL
 
 
 def test_summaries_that_would_take_more_than_half_the_time_get_the_highest_compression_that_does_not():

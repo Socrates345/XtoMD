@@ -72,16 +72,10 @@ if [[ -n "${XMD_BRIEF_DEST:-}" ]]; then
     done
 fi
 
-# a rented disk need not keep what has been read: the briefs and digests, the exports and the runs they came from
-# (not the database: `xmd fetch` prunes it itself, see KEEP_DAYS in xmd/core/store.py)
+# a rented disk need not keep what has been read: the briefs and digests (not the database, the exports or the runs:
+# `xmd fetch` prunes those itself, see KEEP_DAYS in xmd/core/store.py and EXPORT_KEEP_DAYS in xmd/cli.py)
 if [[ "${XMD_KEEP_DAYS:-}" =~ ^[0-9]+$ ]]; then
     find "$digests" -maxdepth 1 -type f -name '*.md' -mtime +"$XMD_KEEP_DAYS" -delete
-    if [[ -d "$digests/.export" ]]; then
-        find "$digests/.export" -maxdepth 1 -type f -mtime +"$XMD_KEEP_DAYS" -delete
-    fi
-    if [[ -d "$digests/.runs" ]]; then
-        find "$digests/.runs" -mindepth 1 -maxdepth 1 -type d -mtime +"$XMD_KEEP_DAYS" -exec rm -rf {} +
-    fi
 fi
 
 exit "$code"

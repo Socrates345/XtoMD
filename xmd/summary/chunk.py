@@ -55,12 +55,13 @@ MIN_ITEMS_SHARES = {RECAP: 0.5}
 
 # What share of each tier's full-text words the brief may keep, before the level factor (docs/digest-summary.md, "Size and reading time"). For the
 # regular posts it is the run's compression ratio, summary words over source words (--compression in
-# scripts/run_system.py): 0.30 is the plan's scenario A, 0.10 its scenario B. Plain retweets and the recap group
+# scripts/run_system.py): the plan's scenario A was 0.30, B 0.10, and the default sits between them since the reader
+# asked for it on 2026-10-15. Plain retweets and the recap group
 # are the least important, so they keep fixed, smaller shares; recap went 3% -> 2% -> 6% after the reader called
 # 2% "way too short", then 12% when 6% was "too summed up" to pick themes from (a theme per ~5 posts instead of
 # ~10), then 16% with its longer themes (WORDS_PER_ITEM). The plan's scenario C only changes how image tweets are
 # shown, so it is no compression.
-DEFAULT_COMPRESSION = 0.30
+DEFAULT_COMPRESSION = 0.25
 THEME_SHARES = {RETWEET: 0.04, RECAP: 0.16}
 
 

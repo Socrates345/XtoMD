@@ -12,7 +12,7 @@ spent in the reader's own order, and the image tweets take up the difference:
 1. what is always there: the header, trending, the sections' headings, a link for every image tweet;
 2. priority tweets, in full unless they would take more than half the time, or the brief can't fit otherwise
    (then a line each);
-3. the summaries, at the usual compression (0.30) unless they would take more than half the time, or more than
+3. the summaries, at the usual compression (chunk.DEFAULT_COMPRESSION) unless they would take more than half the time, or more than
    1 and 2 leave: then the highest compression at which they do, never under 0.10;
 4. image tweets, with what is left: half of it shows the first ones whole, with their pictures, the rest gives
    the next ones a line, and the others stay links. They are taken in turn across groups, by group level, and

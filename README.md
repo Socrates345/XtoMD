@@ -55,7 +55,7 @@ lms server start --port 1234 --bind 127.0.0.1               # or: LM Studio app,
 lms load qwen/qwen3.5-9b --context-length 8192 --ttl 1800   # --ttl: unloads itself after 30 idle minutes
 xmd fetch
 xmd digest --window 24h                                     # or --window since-run (the default)
-python scripts\run_system.py --model qwen --time 10         # summarizes the newest export (or --compression 0.3)
+python scripts\run_system.py --model qwen --time 10         # summarizes the newest export (or --compression 0.25)
 python scripts\assemble_brief.py                            # writes digests\<date>-<hour>-<window>-10min-brief.md
 lms unload qwen/qwen3.5-9b
 lms server stop
@@ -84,7 +84,7 @@ lms unload qwen/qwen3.5-9b
 lms server stop
 ```
 
-Every run stays in `digests\.runs\`; `assemble_brief.py --run LABEL` assembles any of them again.
+A run stays in `digests\.runs\`, and its export in `digests\.export\`, for `EXPORT_KEEP_DAYS` days (`xmd/cli.py`): until then `assemble_brief.py --run LABEL` assembles it again.
 
 ### Away from the laptop
 
@@ -111,7 +111,7 @@ Run all commands from the repo root. `--config` and `--version` go before the su
 | `xmd digest` | `--quick` | off | Also write the quick digest, `<stamp>-quick.md`. |
 | `xmd sources` | | | List the configured handles with their group. |
 
-`xmd fetch` keeps tweets in `xmd.db` (SQLite, deduped by tweet URL) for `KEEP_DAYS` days after fetching them (`xmd/core/store.py`): each fetch deletes the older ones and never stores a tweet posted before that, such as the newest tweet of an account quiet for longer. Its per-source lookback is sized to the time since your last fetch — narrower on a quick re-run, capped at 7 days after a longer break. A source that fails to fetch does not stop the others: after each pass `xmd fetch` lists the handles that failed, with the reason, so you can spot an account that changed its @.
+`xmd fetch` keeps tweets in `xmd.db` (SQLite, deduped by tweet URL) for `KEEP_DAYS` days after fetching them (`xmd/core/store.py`): each fetch deletes the older ones and never stores a tweet posted before that, such as the newest tweet of an account quiet for longer. Each fetch also deletes the exports and runs (`digests/.export/`, `digests/.runs/`) last written more than `EXPORT_KEEP_DAYS` days ago (`xmd/cli.py`); digests and briefs are left alone. Its per-source lookback is sized to the time since your last fetch — narrower on a quick re-run, capped at 7 days after a longer break. A source that fails to fetch does not stop the others: after each pass `xmd fetch` lists the handles that failed, with the reason, so you can spot an account that changed its @.
 
 `xmd digest` writes to `digests/`, by default only what the brief is made from — the LLM export (`.export/<stamp>.txt` + `.map.json`, priority and image tweets left out on purpose) and the id of every item in the digest (`.export/<stamp>.items.json`). On request: `<stamp>.md` (`--full`, the full archive) and `<stamp>-quick.md` (`--quick`, one line per regular post, priority and image tweets whole).
 
@@ -154,11 +154,11 @@ Priority and image tweets never reach a model for a summary; with `language:` se
 
 **Checks.** Nothing the model writes is taken on trust: a cited post number not in the chunk is removed (an item left with no real source is dropped); a number, `@handle` or `$ticker` none of the cited posts contain gets a visible ⚠; a reply that's cut off, not JSON, or far too short is retried once, then falls back to one-liners under "Not summarized".
 
-**Files.** `digests/.runs/<label>/` is one run (`run.json`, one JSON per chunk, `sections.json`); read it with `run_stats.py`, delete old ones whenever. `digests/` is git-ignored. On the laptop the summarizing is local, to a server on your own machine; a `--base-url` anywhere else is warned about, and is what a VPS or a phone uses ([Away from the laptop](#away-from-the-laptop)). `xmd fetch` sends your follow list and API key to whichever provider you chose (twitterapi.io or tweetapi.com).
+**Files.** `digests/.runs/<label>/` is one run (`run.json`, one JSON per chunk, `sections.json`); read it with `run_stats.py`; `xmd fetch` deletes old ones (see `xmd fetch` above). `digests/` is git-ignored. On the laptop the summarizing is local, to a server on your own machine; a `--base-url` anywhere else is warned about, and is what a VPS or a phone uses ([Away from the laptop](#away-from-the-laptop)). `xmd fetch` sends your follow list and API key to whichever provider you chose (twitterapi.io or tweetapi.com).
 
 ### Reading time
 
-**How it is counted.** The `~N min read` in the header is your pace, not a word count: **40 lines a minute, plus 4 seconds a picture**. Blank lines are free.
+**How it is counted.** The `~N min read` in the header is your pace, not a word count: **40 lines a minute, plus 4 seconds a picture**. Blank lines are free. It is rounded up to the next 5 minutes (27 → ~30, never under ~5; `READ_MINUTES_STEP` in `xmd/summary/brief.py`): how long a brief really takes depends on the posts that catch your eye and the links you open.
 
 | In the brief | Costs |
 | --- | --- |
@@ -169,7 +169,7 @@ Priority and image tweets never reach a model for a summary; with `language:` se
 
 The pace is two constants in `xmd/summary/brief.py`, `LINES_PER_MINUTE` and `SECONDS_PER_IMAGE` (measured once: 200 lines in 5 minutes, links clicked). Change them if you read faster or slower: the header, `--time` and everything the scripts print follow.
 
-**Without `--time`** the brief is as long as the day was: the summaries keep 30% of the regular posts' words (`--compression`), everything else is shown whole. Most of the time is not the summaries: on 2026-09-29, image tweets were two thirds of a 30-minute brief and priority tweets a fifth, so lowering the compression from 0.30 to 0.10 saved about a minute. The compression is the weak lever, the pictures are the strong one.
+**Without `--time`** the brief is as long as the day was: the summaries keep 25% of the regular posts' words (`--compression`, default 0.25: `DEFAULT_COMPRESSION` in `xmd/summary/chunk.py`), everything else is shown whole. Most of the time is not the summaries: on 2026-09-29, image tweets were two thirds of a 30-minute brief and priority tweets a fifth, so lowering the compression from 0.25 to 0.10 saves under a minute. The compression is the weak lever, the pictures are the strong one.
 
 **With `--time MIN`** the brief is fitted to that many minutes at that pace. The time is spent in this order, each part taking from what the ones above leave:
 
@@ -177,25 +177,25 @@ The pace is two constants in `xmd/summary/brief.py`, `LINES_PER_MINUTE` and `SEC
 | --- | --- | --- | --- |
 | 1 | Header, trending, section headings, **In short** | Always shown. | |
 | 2 | Priority tweets | In full, unless that takes more than half the time, or the brief can't fit otherwise: then one line each, the full tweet behind its link. | when assembled |
-| 3 | Summaries | Compression 0.30, unless they would take more than half the time, or more than 1 and 2 leave: then the highest compression at which they don't, never under 0.10. | before the model runs |
+| 3 | Summaries | Compression 0.25, unless they would take more than half the time, or more than 1 and 2 leave: then the highest compression at which they don't, never under 0.10. | before the model runs |
 | 4 | Image tweets | What is left. Half of it shows the first ones whole with their pictures, the rest gives the next ones a line (🖼), and the others are listed as links. They take turns across groups (a `high` group gets three times the share of a `low` one of the same size) and across sources, so one prolific account can't take them all. | when assembled |
 
 So a time a little short of the day costs you pictures only; the summaries get thinner only when they alone would crowd the brief.
 
-**Example.** One real digest (2026-10-01, 909 tweets): uncut it is ~27 minutes, of which image tweets ~17, summaries ~6 at most, priority tweets ~2.
+**Example.** One real digest (2026-10-01, 909 tweets, measured at 0.30 and re-sized here for 0.25): uncut it is ~26 minutes, of which image tweets ~17, summaries ~5 at most, priority tweets ~2.
 
 | You ask for | Compression | Summaries | Priority tweets | Image tweets |
 | --- | --- | --- | --- | --- |
-| no `--time`, or `--time 30` | 0.30 | ~6 min | in full | all whole, ~17 min |
-| `--time 20` | 0.30 | ~6 min | in full | ~11 min of the 17 |
+| no `--time`, or `--time 30` | 0.25 | ~5 min | in full | all whole, ~17 min |
+| `--time 20` | 0.25 | ~5 min | in full | ~11 min of the 17 |
 | `--time 10` | 0.21 | ~5 min: half the time | in full | ~1 min, plus what the summaries don't use |
 | `--time 5` | 0.10 | ~3 min: the floor | one line each | links only; the brief may come out a little longer than asked |
 
 `run_system.py` prints this split before it calls the model:
 
 ```text
-time 10 min (40 lines a minute, 4 s a picture): uncut, this brief would take ~27 min. So:
-  summaries        ~5.0 min at most, compression 0.21 (lowered from 0.30 to fit half the time)
+time 10 min (40 lines a minute, 4 s a picture): uncut, this brief would take ~26 min. So:
+  summaries        ~5.0 min at most, compression 0.21 (lowered from 0.25 to fit half the time)
   priority tweets  ~2.2 min, in full
   image tweets     ~1.3 min of the ~17.4 they take whole, plus what the summaries leave unused: pictures first, then a line each, then links
   the summaries are sized now; the priority and image tweets are cut when the brief is assembled
@@ -207,7 +207,7 @@ time 10 min (40 lines a minute, 4 s a picture): uncut, this brief would take ~27
 
 | You type | Summaries | Priority and image tweets |
 | --- | --- | --- |
-| `run_headless.py --24h` or `make_brief.py --24h` | compression 0.30 | whole: the brief is as long as the day |
+| `run_headless.py --24h` or `make_brief.py --24h` | compression 0.25 | whole: the brief is as long as the day |
 | the same with `--time 10` | sized for 10 minutes (rule 3) | cut to 10 minutes (rules 2 and 4) |
 | `run_system.py --time 10`, then `assemble_brief.py` | the same, by hand | the same: the run remembers its time |
 | `assemble_brief.py --time 10` on a run you already have | unchanged, no model call | re-cut to 10 minutes |
@@ -257,8 +257,8 @@ Chunks the newest export, sends each chunk to the model, saves the raw replies u
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--model NAME` | the server's only model | Model id, or part of one. |
-| `--time MIN` | unset | Size the summaries for a reading time: compression 0.30 unless they would take more than half of it (see [Reading time](#reading-time)). `assemble_brief.py` then cuts priority and image tweets to it. |
-| `--compression RATIO` | `0.30` | Or set it yourself: share of the regular posts' words the summaries keep, `0.30` or `30%`. Not with `--time`. |
+| `--time MIN` | unset | Size the summaries for a reading time: compression 0.25 unless they would take more than half of it (see [Reading time](#reading-time)). `assemble_brief.py` then cuts priority and image tweets to it. |
+| `--compression RATIO` | `0.25` | Or set it yourself: share of the regular posts' words the summaries keep, `0.25` or `25%`. Not with `--time`. |
 | `--dry-run` | off | Print the chunk plan (sizes, item limits, word targets) and stop; no model call. |
 | `--only ID,ID` | all chunks | Run only these chunks, e.g. `regular-01,recap-03`. |
 | `--stats` | off | Print the chunk plan, per-chunk progress, token counts, chars-per-token, and the full `run_stats.py` table (always available on demand: see below). |

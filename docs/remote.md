@@ -47,7 +47,7 @@ scripts/make_brief.py                                                |
 3. takes a lock, so the timer and a run asked for from the phone never overlap;
 4. runs `scripts/make_brief.py`, which checks the model answers **before** fetching, then fetches, digests, summarizes and assembles, exactly as on the laptop;
 5. on the phone, copies the new brief to `XMD_BRIEF_DEST`;
-6. if `XMD_KEEP_DAYS` is set, deletes old briefs, exports and runs.
+6. if `XMD_KEEP_DAYS` is set, deletes old briefs and digests (old exports and runs were already deleted by the fetch).
 
 | Exit code | Meaning |
 | --- | --- |
@@ -96,7 +96,7 @@ Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 da
 | `XMD_TWEETAPI_KEY` or `XMD_TWITTERAPI_KEY` | VPS, phone | The X backend's key, if `sources.yaml` does not hold it | The key in `sources.yaml` |
 | `XMD_BRIEF_DEST` | Phone | Folder where briefs end up | `Documents/xmd-briefs` on the phone; no copy on the VPS |
 | `XMD_VPS_HOST` | Phone | The VPS, as named in `~/.ssh/config` | `xmd-vps` |
-| `XMD_KEEP_DAYS` | VPS, phone | After each run, delete briefs, exports and runs older than this many days | Everything is kept |
+| `XMD_KEEP_DAYS` | VPS, phone | After each run, delete briefs and digests older than this many days | Briefs and digests are kept |
 
 Venice needs this extra body:
 
@@ -195,7 +195,7 @@ Venice's retention is a promise that cannot be checked from outside. Handles are
 - **The timer's unit is sandboxed:** it can write inside the repo only (`ProtectSystem=strict`), gets a private `/tmp` and cannot gain privileges.
 - **SSH is by key only** and is the only open port.
 - **`.env` is readable by its owner only** (`chmod 600`) and is git-ignored.
-- **`XMD_KEEP_DAYS`** keeps old briefs, exports and runs off the rented disk. The database prunes itself on every fetch, whatever this says (`KEEP_DAYS` in `xmd/core/store.py`).
+- **`XMD_KEEP_DAYS`** keeps old briefs and digests off the rented disk. The database, the exports and the runs are pruned on every fetch, whatever this says (`KEEP_DAYS` in `xmd/core/store.py`, `EXPORT_KEEP_DAYS` in `xmd/cli.py`).
 
 Not covered: the VPS host can read its own disk, and agents you later run on the same server can read this app's files unless they run as another user.
 

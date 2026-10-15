@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
 import shutil
 import tempfile
@@ -53,6 +54,9 @@ WPM_NORMAL = 230
 WPM_DIAGONAL = 400
 SECONDS_PER_IMAGE = 4
 LINES_PER_MINUTE = 40  # the reader's own pace, measured 2026-09-20: 200 lines in 5 minutes, links clicked included
+# a reading time is told rounded up to this many minutes: how long a brief takes depends on the posts that catch the
+# eye and the links opened, so a closer figure would claim a precision it does not have
+READ_MINUTES_STEP = 5
 MAX_CITES = 4  # links shown per item; the rest are counted (a recap theme has its own cap, chunk.MAX_THEME_IDS)
 PRIORITY_LINE_CHARS = 280  # a priority tweet cut to one line (see Cuts) keeps about a tweet's worth
 
@@ -114,6 +118,12 @@ def reading_minutes(words: int, images: int, wpm: int) -> float:
 def pace_minutes(lines: int, images: int) -> float:
     """Minutes at the reader's own pace: LINES_PER_MINUTE non-blank lines, plus SECONDS_PER_IMAGE a picture."""
     return lines / LINES_PER_MINUTE + images * SECONDS_PER_IMAGE / 60
+
+
+def shown_minutes(minutes: float) -> int:
+    """A reading time as the reader is told it: whole minutes, rounded up to READ_MINUTES_STEP (27 -> 30, 25 -> 25),
+    never under one step."""
+    return max(1, math.ceil(round(minutes) / READ_MINUTES_STEP)) * READ_MINUTES_STEP
 
 
 def _content_lines(lines: list[str]) -> int:
@@ -589,7 +599,7 @@ def build_brief(
     normal = reading_minutes(total_words, total_images, WPM_NORMAL)
     diagonal = reading_minutes(total_words, total_images, WPM_DIAGONAL)
     yours = pace_minutes(content_lines, total_images)
-    lines[estimate_at] = (f"**~{max(1, round(yours))} min read**" + _fitted_note(cuts, items, tiers)
+    lines[estimate_at] = (f"**~{shown_minutes(yours)} min read**" + _fitted_note(cuts, items, tiers)
                           + (f" · [full digest]({full_name})" if full_name else "")
                           + (f" · {fetch_note(fetch_report)}" if fetch_note(fetch_report) else ""))
     if model_line:  # provenance for whoever debugs it, invisible when reading

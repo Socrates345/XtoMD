@@ -37,7 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
 from xmd.summary.brief import (  # noqa: E402
-    brief_stamp, build_brief, digest_items, load_item_ids, load_run, summary_items, window_kind,
+    brief_stamp, build_brief, digest_items, load_item_ids, load_run, shown_minutes, summary_items, window_kind,
 )
 from xmd.summary.chunk import parse_export  # noqa: E402
 from xmd.core.config import Language, load_config  # noqa: E402
@@ -229,8 +229,9 @@ def main(argv: list[str] | None = None) -> int:
     if s["regular_posts"]:
         print(f"regular posts cited by a summary: {s['regular_posts_cited']} of {s['regular_posts']}; "
               f"posts without any summary (failed or not run): {s['posts_without_summary']}")
-    print(f"\nreading time: ~{s['minutes_at_your_pace']:.0f} min at your pace (40 lines a minute, 4 s per image); "
-          f"by words: ~{s['minutes_normal']:.0f} min at 230 wpm, ~{s['minutes_diagonal']:.0f} min at 400 wpm")
+    print(f"\nreading time: ~{shown_minutes(s['minutes_at_your_pace'])} min at your pace (40 lines a minute, 4 s per "
+          f"image); by words: ~{shown_minutes(s['minutes_normal'])} min at 230 wpm, "
+          f"~{shown_minutes(s['minutes_diagonal'])} min at 400 wpm")
     if minutes:
         if cuts is None:
             print(f"time {minutes:g} min: the whole brief fits, nothing cut")
@@ -240,8 +241,8 @@ def main(argv: list[str] | None = None) -> int:
                   f"{sum(1 for i in media if not cuts.keeps_pictures(i) and cuts.keeps_caption(i))} get a line, "
                   f"the rest a link" + ("; priority tweets as one-liners" if cuts.priority_one_liners else ""))
             if s["minutes_at_your_pace"] > minutes:
-                print(f"  the shortest this digest makes is ~{s['minutes_at_your_pace']:.0f} min (summaries, trending, "
-                      "a line per priority tweet, links for the images)")
+                print(f"  the shortest this digest makes is ~{shown_minutes(s['minutes_at_your_pace'])} min "
+                      "(summaries, trending, a line per priority tweet, links for the images)")
     print(f"\nwritten to {out}")
     return 0
 

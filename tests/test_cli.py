@@ -1,12 +1,13 @@
 import asyncio
 import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from xmd.cli import (
-    PROGRESS_BAR_WIDTH, SINCE_RUN_MAX_HOURS, _companions, _digest, _fetch_to_store, _line_progress,
+    EXPORT_KEEP_DAYS, PROGRESS_BAR_WIDTH, SINCE_RUN_MAX_HOURS, _companions, _digest, _fetch_to_store, _line_progress,
     _render_progress,
     _report_failures,
 )
@@ -619,6 +620,26 @@ def test_a_fetch_forgets_what_was_fetched_too_long_ago_and_does_not_store_it_aga
     store = Store(config.storage)
     assert [i.url for i in store.recent_by_fetch(now - timedelta(days=365))] == [fresh.url]
     store.close()
+
+
+def test_a_fetch_deletes_the_exports_and_runs_written_too_long_ago(tmp_path, monkeypatch):
+    _fetch_that_answers(monkeypatch, FetchResult([]))
+    config = _config(tmp_path)
+    export, runs = config.digest_dir / ".export", config.digest_dir / ".runs"
+    files = (export / "old.txt", export / "new.txt", runs / "old" / "run.json", runs / "new" / "run.json",
+             runs / "reassembled" / "run.json", runs / "reassembled" / "sections.json", config.digest_dir / "old.md")
+    for path in files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    old = time.time() - (EXPORT_KEEP_DAYS + 1) * 86400
+    for path in (export / "old.txt", runs / "old" / "run.json", runs / "old", runs / "reassembled" / "run.json",
+                 config.digest_dir / "old.md"):
+        os.utime(path, (old, old))
+
+    asyncio.run(_fetch_to_store(config))
+    assert sorted(p.name for p in export.iterdir()) == ["new.txt"]
+    assert sorted(p.name for p in runs.iterdir()) == ["new", "reassembled"]  # its sections were written since
+    assert (config.digest_dir / "old.md").exists()  # a digest or a brief is the reader's to delete
 
 
 def test_a_poster_silent_for_longer_than_the_database_keeps_is_shown_in_full_when_back(tmp_path, monkeypatch):

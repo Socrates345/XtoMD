@@ -7,7 +7,7 @@ import pytest
 
 from xmd.summary.brief import (
     Cuts, brief_stamp, build_brief, digest_item_ids, digest_time, load_item_ids, load_run, measure, reading_minutes,
-    window_kind,
+    shown_minutes, window_kind,
 )
 from xmd.summary.chunk import MAX_THEME_IDS, parse_export
 from xmd.digest.export import build_export
@@ -249,9 +249,13 @@ def test_the_header_is_the_date_the_reading_time_and_the_full_digest_and_nothing
     brief = _brief()
     lines = brief.markdown.splitlines()
     assert lines[0] == "# X brief — 2026-09-19"  # only the date: no time of day, no model
-    assert lines[2] == "**~1 min read** · [full digest](full.md)"  # the test world is tiny
+    assert lines[2] == "**~5 min read** · [full digest](full.md)"  # the test world is tiny: one step of 5
     for gone in ("items ·", "sources", "quick digest", "Brief by", "compression", "lines a minute", "priority · "):
         assert gone not in "\n".join(lines[:6])
+
+
+def test_a_reading_time_is_told_rounded_up_to_five_minutes():
+    assert [shown_minutes(m) for m in (27, 29, 25, 25.4, 26, 0.2, 3)] == [30, 30, 25, 25, 30, 5, 5]
 
 
 def test_the_reading_time_is_lines_at_the_readers_pace_plus_the_pictures_and_the_stats_keep_the_detail():
@@ -287,7 +291,7 @@ def test_a_bigger_brief_reports_a_bigger_number_of_minutes():
     _text, mapping = build_export(items, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
     brief = build_brief(items, NOW, [], mapping, {}, [], priority_sources=PRIORITY, recap_groups=RECAP, full_name="full.md")
     minutes = int(brief.markdown.splitlines()[2].split("~")[1].split(" ")[0])
-    assert minutes >= 6 and minutes == round(brief.stats["minutes_at_your_pace"])
+    assert minutes >= 10 and minutes == shown_minutes(brief.stats["minutes_at_your_pace"])
 
 
 def test_a_digests_items_are_read_from_its_item_ids_in_both_markdown_and_html_forms():

@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))  # the 
 import assemble_brief  # noqa: E402
 import run_system  # noqa: E402
 from xmd.core.config import Language  # noqa: E402
-from xmd.summary.budget import Sizing  # noqa: E402
+from xmd.summary.budget import MAX_COMPRESSION, Sizing  # noqa: E402
 from xmd.summary.translate import Translated, Translation  # noqa: E402
 
 EN_FR = Language(("en", "fr"), "en")
@@ -67,21 +67,22 @@ BAREST = {"minutes_at_your_pace": 3.5, "band_minutes": {"priority": 2.0, "images
 def test_a_reading_time_says_how_the_time_is_shared_at_the_readers_pace():
     lines = run_system._sizing_lines(10, Sizing(0.21, 26.5, 5.0, 5.0), False, WHOLE, BAREST)
     assert lines[0] == "time 10 min (40 lines a minute, 4 s a picture): uncut, this brief would take ~26 min. So:"
-    assert "summaries        ~5.0 min at most, compression 0.21 (lowered from 0.30 to fit half the time)" in lines[1]
+    assert (f"summaries        ~5.0 min at most, compression 0.21 (lowered from {MAX_COMPRESSION:.2f} to fit half the time)"
+            in lines[1])
     assert "priority tweets  ~2.0 min, in full" in lines[2]
     assert "image tweets     ~1.5 min of the ~17.0 they take whole" in lines[3]  # 10 - 3.5 - 5.0
     assert "longer than asked" not in "\n".join(lines)
 
 
 def test_a_reading_time_the_whole_brief_fits_cuts_nothing_and_says_so_in_one_line():
-    lines = run_system._sizing_lines(30, Sizing(0.30, 26.5, 5.7, 30), False, WHOLE, BAREST)
+    lines = run_system._sizing_lines(30, Sizing(MAX_COMPRESSION, 26.5, 5.7, 30), False, WHOLE, BAREST)
     assert lines == ["time 30 min (40 lines a minute, 4 s a picture): the whole brief takes ~26 min at most, "
-                     "so nothing is cut (compression 0.30)"]
+                     f"so nothing is cut (compression {MAX_COMPRESSION:.2f})"]
 
 
 def test_a_reading_time_keeps_the_usual_compression_when_only_the_image_tweets_have_to_give():
-    lines = run_system._sizing_lines(20, Sizing(0.30, 26.5, 5.7, 10), False, WHOLE, BAREST)
-    assert "compression 0.30 (the usual one: they have the room)" in lines[1]
+    lines = run_system._sizing_lines(20, Sizing(MAX_COMPRESSION, 26.5, 5.7, 10), False, WHOLE, BAREST)
+    assert f"compression {MAX_COMPRESSION:.2f} (the usual one: they have the room)" in lines[1]
     assert "image tweets     ~10.8 min of the ~17.0" in lines[3]
 
 

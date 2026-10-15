@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,10 @@ from .digest.render import build_markdown, build_quick
 from .core.store import KEEP_DAYS, Store
 
 EXPORT_DIRNAME = ".export"  # dot-dir under digest_dir: invisible to Obsidian
+RUNS_DIRNAME = ".runs"  # scripts/run_system.py's run folders, also under digest_dir
+# how long an export, and a run made from one, stays: every `xmd fetch` deletes the older ones, as it prunes xmd.db
+# (store.KEEP_DAYS). A run past it can no longer be assembled again; the digests and briefs themselves are kept
+EXPORT_KEEP_DAYS = 15
 DEFAULT_LOOP_SECONDS = 900  # 15 min
 SINCE_RUN_MAX_HOURS = 168  # 7 days -- AFK-gap cap, so a long absence can't blow up API cost
 _ASKED_URL = re.compile(r" for url '[^']*'")  # httpx names the URL in its errors: of no use in a digest
@@ -132,6 +137,7 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
     store = Store(config.storage)
     try:
         store.forget(horizon)
+        _forget_files(config.digest_dir, datetime.now(timezone.utc) - timedelta(days=EXPORT_KEEP_DAYS))
         new = store.add_items(kept)
         now = datetime.now(timezone.utc)
         store.set_meta("last_run_at", now.isoformat())
@@ -141,6 +147,28 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
         store.close()
     _report_failures(result.failed)
     return new
+
+
+def _forget_files(digest_dir: Path, before: datetime) -> None:
+    """Delete each export file and run folder last written before `before`. A run folder's age is its newest file:
+    re-assembling a run (its section summaries, its translations) keeps it. What cannot be deleted now (a file open
+    elsewhere) is left for the next fetch."""
+    cutoff = before.timestamp()
+    for folder in (digest_dir / EXPORT_DIRNAME, digest_dir / RUNS_DIRNAME):
+        if not folder.is_dir():
+            continue
+        for entry in folder.iterdir():
+            try:
+                tree = entry.is_dir() and not entry.is_symlink()
+                stamps = [p.stat().st_mtime for p in entry.rglob("*")] if tree else []
+                if max(stamps, default=entry.lstat().st_mtime) >= cutoff:
+                    continue
+                if tree:
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except OSError:
+                pass
 
 
 def _digest(config: Config, window: str, full: bool = False, quick: bool = False) -> Path | None:

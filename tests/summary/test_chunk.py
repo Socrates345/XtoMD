@@ -118,7 +118,6 @@ def test_the_target_is_the_tier_ratio_of_the_full_words_with_a_floor():
 
 def test_the_regular_share_is_the_compression_and_the_other_tiers_keep_their_fixed_shares():
     assert tier_shares(0.30)[REGULAR] == 0.30 and tier_shares(0.10)[REGULAR] == 0.10  # the plan's scenarios A and B
-    assert DEFAULT_COMPRESSION == 0.30  # the daily run is scenario A
     for compression in (0.30, 0.10):
         assert tier_shares(compression)[RETWEET] == 0.04  # retweets rank below the handles' own posts
         # the recap group: 2% was "way too short", 6% "too summed up", 12% grew with its two-sentence themes

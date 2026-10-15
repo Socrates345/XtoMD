@@ -126,20 +126,18 @@ def test_two_briefs_are_never_made_at_once(repo):
     assert _run(repo, "brief.sh", "24h").returncode == 0  # and once it is over, the next one runs
 
 
-def test_what_is_older_than_the_days_to_keep_is_deleted_and_nothing_is_without_that_setting(repo):
+def test_the_briefs_older_than_the_days_to_keep_are_deleted_and_nothing_is_without_that_setting(repo):
     digests = repo / "digests"
-    old = [_aged(digests / "2026-09-10-6pm-24h-brief.md", 20), _aged(digests / ".export" / "2026-09-10-1600.txt", 20),
-           _aged(digests / ".runs" / "old-run" / "run.json", 20)]
-    _aged(digests / ".runs" / "old-run", 20)
-    kept = [_aged(digests / "2026-10-01-6pm-24h-brief.md", 5), _aged(digests / ".export" / "2026-10-01-1600.txt", 5),
-            _aged(digests / ".runs" / "new-run" / "run.json", 5), _aged(digests / "archive.7z", 20)]
+    old = _aged(digests / "2026-09-10-6pm-24h-brief.md", 20)
+    # old exports and runs are the fetch's to delete (EXPORT_KEEP_DAYS in xmd/cli.py), not this setting's
+    kept = [_aged(digests / "2026-10-01-6pm-24h-brief.md", 5), _aged(digests / ".export" / "2026-09-10-1600.txt", 20),
+            _aged(digests / ".runs" / "old-run" / "run.json", 20), _aged(digests / "archive.7z", 20)]
 
     assert _run(repo, "brief.sh", "24h").returncode == 0
-    assert all(p.exists() for p in old + kept)
+    assert old.exists() and all(p.exists() for p in kept)
 
     assert _run(repo, "brief.sh", "24h", XMD_KEEP_DAYS="14").returncode == 0
-    assert not any(p.exists() for p in old) and not (digests / ".runs" / "old-run").exists()
-    assert all(p.exists() for p in kept)
+    assert not old.exists() and all(p.exists() for p in kept)
 
 
 # --- termux/phone.sh, the brief made on the phone alone
