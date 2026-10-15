@@ -60,6 +60,7 @@ def test_the_reply_budget_is_counted_in_items_and_bounded():
     assert reply_budget(Chunk("t", RETWEET, many[:30], (), 393)) == 1100  # retweet themes, 8 at most: 8 x 100 + 300
     assert reply_budget(Chunk("r", REGULAR, many, (), 3000)) == 3200  # capped, so it fits an 8K context
     assert reply_budget(Chunk("r", REGULAR, many[:1], (), 20)) == 500  # and never below a floor
+    assert reply_budget(Chunk("c", RECAP, many, (), 900)) == 3100  # 20 recap themes of up to two sentences: 20 x 140 + 300
 
 
 def test_a_failed_attempt_is_retried_and_the_attempts_counted():
@@ -96,10 +97,11 @@ def test_a_reply_with_far_too_few_items_is_a_failure_and_is_retried():
 
 def test_a_schema_function_gives_each_chunk_its_own_schema():
     engine, chunks = FakeEngine(), _chunks()
-    run_chunks(engine, chunks, _system, schema=lambda c: bounded_schema(c.min_items, c.max_items))
+    run_chunks(engine, chunks, _system, schema=lambda c: bounded_schema(c.min_items, c.max_items, c.max_ids))
     for call, chunk in zip(engine.calls, chunks):
         limits = call["schema"]["properties"]["items"]
         assert (limits["minItems"], limits["maxItems"]) == (chunk.min_items, chunk.max_items)
+        assert limits["items"]["properties"]["ids"].get("maxItems") == chunk.max_ids  # a recap theme's only
 
 
 def test_check_reply_names_what_is_wrong():

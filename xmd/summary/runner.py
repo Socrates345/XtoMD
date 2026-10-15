@@ -22,8 +22,9 @@ from ..core.tiers import RECAP, REGULAR, RETWEET
 
 DEFAULT_TEMPERATURE = 0.2  # low: the same posts should give nearly the same brief
 # tokens one reply item costs, measured on the first real runs: 70-115 for an item with a sentence of detail.
-# Plain retweets are themes now, like recap, so they cost the same.
-TOKENS_PER_ITEM = {REGULAR: 100, RETWEET: 100, RECAP: 100}
+# Plain retweets are themes now, like recap, so they cost the same. A recap theme has two sentences (prompt v10),
+# so more: 20 of them still fit MAX_REPLY_TOKENS.
+TOKENS_PER_ITEM = {REGULAR: 100, RETWEET: 100, RECAP: 140}
 MAX_REPLY_TOKENS = 3200  # with ~4.2K tokens in, that stays inside an 8K context
 TRUNCATION_RATIO = 1.3  # a chunk with this many times its run's median characters per token looks cut short
 BIG_CHUNK = 0.6  # only chunks this big, against the run's biggest, can be cut by a context window

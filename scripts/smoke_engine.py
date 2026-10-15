@@ -65,9 +65,13 @@ SYSTEM = "You condense numbered social-media posts into a short brief. Reply wit
 
 
 def _bounded(most: int) -> dict:
-    """SCHEMA with the item count limited in the schema itself, as a real chunk's is (xmd.summary.prompt): a server
-    that refuses those keywords, or ignores them, should say so here and not in the middle of a brief."""
-    items = {**SCHEMA["properties"]["items"], "minItems": 1, "maxItems": most}
+    """SCHEMA with the item count limited in the schema itself, as a real chunk's is (xmd.summary.prompt), and the
+    posts an item may cite, as a recap chunk's are: a server that refuses those keywords, or ignores them, should
+    say so here and not in the middle of a brief."""
+    item = SCHEMA["properties"]["items"]["items"]
+    ids = {**item["properties"]["ids"], "maxItems": most}
+    item = {**item, "properties": {**item["properties"], "ids": ids}}
+    items = {**SCHEMA["properties"]["items"], "items": item, "minItems": 1, "maxItems": most}
     return {**SCHEMA, "properties": {"items": items}}
 
 # calls per export: what xmd/summary/chunk.py makes of the frozen 24h export (10; tiers are never mixed),

@@ -306,7 +306,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if args.stats:
             print(f"warm-up ok in {warm.seconds:.1f} s (not counted)\n")
-        schema = (lambda chunk: bounded_schema(chunk.min_items, chunk.max_items)) if args.bound_items else BRIEF_SCHEMA
+        schema = ((lambda chunk: bounded_schema(chunk.min_items, chunk.max_items, chunk.max_ids))
+                  if args.bound_items else BRIEF_SCHEMA)
         print(f"summarizing {len(chunks)} chunk{'s' if len(chunks) != 1 else ''}...")
         results = run_chunks(engine, chunks, system_for, schema, args.retries, args.temperature,
                               on_result=_show if args.stats else None)

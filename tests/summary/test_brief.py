@@ -6,10 +6,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from xmd.summary.brief import (
-    brief_stamp, build_brief, digest_item_ids, digest_time, load_item_ids, load_run, measure, reading_minutes,
+    Cuts, brief_stamp, build_brief, digest_item_ids, digest_time, load_item_ids, load_run, measure, reading_minutes,
     window_kind,
 )
-from xmd.summary.chunk import parse_export
+from xmd.summary.chunk import MAX_THEME_IDS, parse_export
 from xmd.digest.export import build_export
 from xmd.core.models import FeedItem, FetchReport
 from xmd.summary.topics import Topic
@@ -126,6 +126,25 @@ def test_an_item_that_cites_nothing_of_its_own_chunk_is_dropped_and_counted():
     assert "1 summary item dropped: no cited post was in its chunk" in brief.markdown
 
 
+def test_a_looping_reply_keeps_each_story_once():
+    """A reply that ran out of stories and looped: the same story reworded (same posts), then whole items copied."""
+    looped = [_item("Council votes", "The council voted", 5), _item("Paint set ships", "A paint set was released", 10),
+              _item("Council decision taken", "A vote was held", 5)]
+    looped += [_item("Paint set ships", "A paint set was released", 10), _item("Council votes", "The council voted", 5)] * 3
+    brief = _brief([_record("regular-02", "regular", [5, 6, 10], looped)])
+    summary = [l for l in brief.markdown.splitlines() if l.startswith("- **") and not l.startswith("- **@")]
+    assert sorted(l.split("**")[1] for l in summary) == ["Council votes", "Paint set ships"]
+    assert brief.stats["repeated_items"] == 7 and brief.stats["summary_items"] == 2
+    assert "7 summary items dropped: the model repeated an earlier item" in brief.markdown
+
+
+def test_two_stories_from_one_post_both_stay_when_the_reply_is_not_looping():
+    two = [_item("Council votes", "The council voted", 5), _item("Budget passes", "The budget passed too", 5)]
+    brief = _brief([_record("regular-02", "regular", [5, 6, 10], two)])
+    assert brief.stats["repeated_items"] == 0 and brief.stats["summary_items"] == 2
+    assert "repeated an earlier item" not in brief.markdown
+
+
 def test_a_figure_in_none_of_the_cited_posts_is_marked_and_a_supported_one_is_not():
     md = _brief().markdown
     assert "⚠ not in the cited posts: 63" in next(l for l in md.splitlines() if "Council votes" in l)
@@ -161,20 +180,22 @@ def test_the_recap_group_is_only_a_picture_with_its_themes():
     assert "**Chatter about chatter**" in recap and "chatter one" not in recap  # the posts themselves stay out
 
 
-def test_a_recap_theme_links_every_post_it_cites_with_a_sources_posts_together():
-    """The reader picks a theme to open its posts, so none is counted away as `+N` the way a summary bullet's are."""
+def test_a_recap_theme_links_a_few_of_its_posts_with_a_sources_posts_together():
+    """The reader picks a theme to open its posts: a few links, a source's together, and the rest counted (a run
+    made before the cap, or a server that ignored the schema, can cite more)."""
     chat = [_post(20 + k, "@c1" if k < 6 else "@c2", f"chatter {k}", group="chat") for k in range(8)]
     text, mapping = build_export(chat, NOW, recap_groups=RECAP)
     posts, _ = parse_export(text, mapping)
     ids = [p.n for p in posts]
-    theme = {"headline": "Chatter", "detail": "Everyone posted", "ids": ids[:7]}  # the model left the last post out
+    cited = [ids[0], ids[1], ids[6], *ids[2:6]]  # @c1 twice, @c2, @c1 again; the model left the last post out
+    theme = {"headline": "Chatter", "detail": "Everyone posted", "ids": cited}
     records = [{"chunk": "recap-01", "tier": "recap", "level": "normal", "ids": ids, "ok": True, "reply": {"items": [theme]}}]
     md = build_brief(chat, NOW, records, mapping, {p.n: p.text for p in posts}, [], recap_groups=RECAP).markdown
     line = next(l for l in md.splitlines() if l.startswith("- **Chatter**"))
-    assert line.count("](https://x.com/") == 7 and "+" not in line
-    assert "[@c1](https://x.com/c1/status/20) [2](https://x.com/c1/status/21)" in line  # the name once, then numbers
-    assert "[6](https://x.com/c1/status/25) · [@c2](https://x.com/c2/status/26)" in line
-    assert "Recap group: 8 items from 2 sources, 1 theme linking 7 of them.*" in md  # the eighth is in no theme
+    assert line.count("](https://x.com/") == MAX_THEME_IDS and line.endswith(f" +{len(cited) - MAX_THEME_IDS})")
+    assert "[@c1](https://x.com/c1/status/20) [2](https://x.com/c1/status/21) [3](https://x.com/c1/status/22)" in line
+    assert " · [@c2](https://x.com/c2/status/26)" in line  # after the first source's, though cited between them
+    assert f"Recap group: 8 items from 2 sources, 1 theme linking {MAX_THEME_IDS} of them.*" in md  # the links shown
 
 
 def test_image_tweets_are_kept_whole_in_their_own_section_and_counted():
@@ -391,6 +412,41 @@ def test_a_priority_tweet_shows_its_pictures_first_with_a_blank_line_after_each_
     assert lines[heading + 2] == "![](https://img.example/a.jpg)" and lines[heading + 3] == ""
     assert lines[heading + 4] == "![](https://img.example/b.jpg)" and lines[heading + 5] == ""
     assert lines[heading + 6] == "the priority caption"  # the text is the caption, below both pictures
+
+
+RETWEETED = "The central bank will cut rates by half a point next week, people familiar say"
+VIPS = frozenset({"@vip", "@vip2", "@vip3"})
+SHARED = [
+    _post(40, "@vip", "my own words", group="finance"),
+    _post(41, "@vip2", "", retweet_of_author="desk", retweet_of_text=RETWEETED, images=["https://img.example/r.jpg"]),
+    _post(42, "@vip3", "Huge if true", retweet_of_author="desk", retweet_of_text=RETWEETED),
+]
+
+
+def test_a_post_several_priority_tweets_retweet_comes_first_in_the_brief_once_with_their_comments():
+    md = build_brief(SHARED, NOW, [], {}, {}, [], priority_sources=VIPS).markdown
+    priority = md.split("## ★ Priority\n\n", 1)[1].split("## Trending", 1)[0]
+    assert priority.startswith("#### 🔁 @desk — retweeted 2 times\n\n![](https://img.example/r.jpg)\n\n"
+                               f"{RETWEETED}\n\n- **@vip3** <!-- item:")  # pictures first, as for any priority tweet
+    assert priority.count(RETWEETED[:40]) == 1
+    assert "Huge if true [↗](https://x.com/vip3/status/42)" in priority
+    assert "- 🔁 without a comment: [@vip2](https://x.com/vip2/status/41)" in priority
+    assert priority.index("- 🔁 without a comment") < priority.index("#### @vip <!-- item:")
+
+
+def test_cut_to_one_liners_a_retweeted_post_is_one_line_with_its_comments_indented_under_it():
+    md = build_brief(SHARED, NOW, [], {}, {}, [], priority_sources=VIPS, cuts=Cuts(priority_one_liners=True)).markdown
+    lines = md.split("## ★ Priority\n\n", 1)[1].splitlines()[2:6]
+    assert lines[0] == f"- 🔁 **@desk** — retweeted 2 times · {RETWEETED}"
+    assert lines[1].startswith("  - **@vip3** <!-- item:") and lines[1].endswith("Huge if true [↗](https://x.com/vip3/status/42)")
+    assert lines[2] == f"  - 🔁 without a comment: [@vip2](https://x.com/vip2/status/41) <!-- item:{SHARED[1].id} -->"
+    assert lines[3].startswith("- **@vip** · ") and "![](" not in md.split("## Trending", 1)[0]
+
+
+def test_a_priority_tweet_heading_escapes_underscores_in_the_handle():
+    tweet = _post(31, "@v_ip_", "text", group="finance")
+    md = build_brief([tweet], NOW, [], {}, {}, [], priority_sources=frozenset({"@v_ip_"})).markdown
+    assert f"#### @v\\_ip\\_ <!-- item:{tweet.id} --> [Post Link](https://x.com/v_ip_/status/31)" in md
 
 
 def test_a_brief_whose_fetch_had_trouble_says_so_in_its_first_line_and_ends_with_the_report():

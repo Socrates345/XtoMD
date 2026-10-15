@@ -32,7 +32,9 @@ text: the archive.
 `build_quick` is its scan layer, written alongside it: every tweet is still
 there, but at a glance — one line per regular post, plain retweets shorter
 still, and the bands the reader asked to keep whole (priority sources' tweets,
-image tweets) shown in full. A recap group (see tiers.py) collapses to a count
+image tweets) shown in full. A post that several priority tweets retweet or
+quote opens the priority band, shown once with their comments listed under it
+(see `shared_retweets`). A recap group (see tiers.py) collapses to a count
 and its repeated stories, leaving the per-tweet detail to the full file. It
 uses plain headings, lists and links only — no `<details>` — for the same
 Obsidian reasons as above.
@@ -43,13 +45,14 @@ from __future__ import annotations
 import html
 import re
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import groupby
 from typing import Callable
 from urllib.parse import quote
 
 from ..core.config import LANGUAGE_NAMES
-from ..core.models import URL, FeedItem, FetchReport
+from ..core.models import URL, FeedItem, FetchReport, is_echo
 from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
 from .trending import DEFAULT_SIMILARITY, Story, find_stories
 
@@ -57,6 +60,7 @@ PLATFORM_LABELS = {"x": "X"}
 DEFAULT_SNIPPET_CHARS = 140
 DEFAULT_RETWEET_CHARS = 100
 DEFAULT_MEDIA_CHARS = 500
+MIN_RETWEETS = 2  # priority tweets retweeting or quoting one post this often are gathered under it, at the top
 FETCH_REPORT = "Fetch report"  # the heading of the section a troubled fetch adds at the end of a page
 _URL = re.compile(r"https?://[^\s<>\"]+")
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]])")
@@ -157,6 +161,11 @@ def _defuse_opener(match: re.Match) -> str:
     return f"\\{marker}" if marker else f"{digits}\\{punctuation}"
 
 
+def words_md(text: str) -> str:
+    """Some of a tweet's words as a paragraph of their own, made as safe as `body_md` makes a whole tweet."""
+    return _BLOCK_OPENER.sub(_defuse_opener, _safe_text(text))
+
+
 def body_md(item: FeedItem) -> str:
     """`item.display_body()` made safe to write into a markdown page, for the places that show a tweet whole (the
     full digest, and the priority tweets of the quick digest and the brief). What X hands over is anyone's text: a
@@ -165,7 +174,7 @@ def body_md(item: FeedItem) -> str:
     whatever would open a block at the start of the line (`#`, `1.`, `-`, a fence...) is escaped too, so a
     tweet can't add headings or swallow the lines below it. `display_body()` itself stays as it is: the word
     counts are made from it."""
-    body = _BLOCK_OPENER.sub(_defuse_opener, _safe_text(item.own_comment))
+    body = words_md(item.own_comment)
     if not item.retweet_of_author:
         return body
     quoted = f"🔁 Retweeted @{_md(item.retweet_of_author)}: {_safe_text(item.retweet_of_text)}"
@@ -265,7 +274,7 @@ def _item_block(item: FeedItem) -> list[str]:
     followed by the body. No separate title line: for X, the title is just
     the tweet text truncated, so showing it above the (untruncated) body
     would repeat it."""
-    heading = f"#### {item.source} <!-- item:{item.id} --> [Post Link]({item.url})"
+    heading = f"#### {_md(item.source)} <!-- item:{item.id} --> [Post Link]({item.url})"
     if item.published:
         heading += f" · {item.published.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC"
     lines = [heading, ""]
@@ -335,6 +344,126 @@ def _render_items(
             first = False
             lines += block(item)
     return lines
+
+
+@dataclass
+class Retweeted:
+    """A post that several priority tweets retweet or quote (see `shared_retweets`), shown once with what each of
+    them said about it."""
+
+    author: str  # the retweeted poster's handle, as the retweets name it
+    text: str  # the retweeted post: its longest copy, since X cuts some
+    retweets: list[FeedItem]  # oldest first
+    original: FeedItem | None = None  # the post itself, when it is a priority tweet too
+
+    @property
+    def comments(self) -> list[FeedItem]:
+        return [i for i in self.retweets if not i.is_pure_retweet]
+
+    @property
+    def plain(self) -> list[FeedItem]:
+        return [i for i in self.retweets if i.is_pure_retweet]
+
+    @property
+    def images(self) -> list[str]:
+        """The post's pictures: its own, or else the ones its plain retweets carry. A quote's pictures are the
+        quote's own and are shown under its comment."""
+        found = self.original.images if self.original else [image for i in self.plain for image in i.images]
+        return list(dict.fromkeys(found))
+
+    def takes(self, author: str, text: str) -> bool:
+        """Whether a post by `author` reading `text` is this one (a copy cut short by X still is)."""
+        return (_handle(author) == _handle(self.author)
+                and (is_echo(text, self.text) or is_echo(self.text, text)))
+
+
+def _handle(name: str) -> str:
+    return name.lstrip("@").lower()
+
+
+def shared_retweets(items: list[FeedItem]) -> tuple[list[Retweeted], list[FeedItem]]:
+    """(the posts that MIN_RETWEETS or more of `items` retweet or quote, most retweeted first, each with those
+    items and with the post itself when it is one of `items`; the items in none of them, in their order)."""
+    groups: list[Retweeted] = []
+    for item in sorted(items, key=lambda i: i.published or datetime.min.replace(tzinfo=timezone.utc)):
+        if not item.retweet_of_author:
+            continue
+        group = next((g for g in groups if g.takes(item.retweet_of_author, item.retweet_of_text)), None)
+        if group is None:
+            groups.append(Retweeted(item.retweet_of_author, item.retweet_of_text, [item]))
+            continue
+        group.retweets.append(item)
+        if len(item.retweet_of_text) > len(group.text):
+            group.text = item.retweet_of_text
+    groups = sorted((g for g in groups if len(g.retweets) >= MIN_RETWEETS), key=lambda g: -len(g.retweets))
+    taken = {i.id for g in groups for i in g.retweets}
+    for group in groups:
+        group.original = next(
+            (i for i in items if i.id not in taken and group.takes(i.author, i.own_comment)), None)
+        if group.original:
+            taken.add(group.original.id)
+    return groups, [i for i in items if i.id not in taken]
+
+
+def retweeted_heading(group: Retweeted) -> str:
+    """A retweeted post's heading: its poster, linked and dated when the post itself is there, and how often it
+    was retweeted."""
+    original = group.original
+    if original is None:
+        heading = f"#### 🔁 @{_md(group.author.lstrip('@'))}"
+    else:
+        heading = f"#### 🔁 {_md(original.source)} <!-- item:{original.id} --> [Post Link]({original.url})"
+        if original.published:
+            heading += f" · {original.published.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC"
+    return heading + f" — retweeted {_count(len(group.retweets), 'time')}"
+
+
+def retweet_comments(
+    group: Retweeted, translated: Translated | None = None, limit: int = 0, indent: str = "",
+) -> list[str]:
+    """The list under a retweeted post: each comment on it, oldest first, then the plain retweets as links.
+    A comment is whole with its pictures, or with `limit` one line of at most that many characters and none.
+    With `translated` (the brief), a comment in a language the reader doesn't read shows its translation, with
+    the original quoted under it."""
+    lines = []
+    for item in group.comments:
+        found = translated(item.own_comment) if translated else None
+        said = found.text if found else item.own_comment
+        said = _inline(said, limit) if limit else _safe_text(said)
+        head = " · ".join(p for p in (f"**{_md(item.source)}** <!-- item:{item.id} -->", _when(item), said) if p)
+        lines.append(f"{indent}- {head} [↗]({item.url})" + (_not_in_original([found]) if found else ""))
+        if found:
+            lines.append(_original_line([found], item.own_comment, limit, indent=indent + "  "))
+        if not limit:
+            lines += [f"{indent}  ![]({image})" for image in item.images]
+    if group.plain:
+        links = " · ".join(f"[{_md(i.source)}]({i.url}) <!-- item:{i.id} -->" for i in group.plain)
+        lines.append(f"{indent}- 🔁 without a comment: {links}")
+    return lines
+
+
+def _retweeted_block(group: Retweeted) -> list[str]:
+    """A post several priority tweets retweet, whole like `_item_block`, with what each of them said under it."""
+    lines = [retweeted_heading(group), ""]
+    body = body_md(group.original) if group.original else words_md(group.text)
+    if body:
+        lines += [body, ""]
+    for image in group.images:
+        lines.append(f"![]({image})")
+    if group.images:
+        lines.append("")
+    return lines + retweet_comments(group) + [""]
+
+
+def _render_priority(items: list[FeedItem], priority_sources: frozenset[str]) -> list[str]:
+    """Priority tweets in full: first, once each, the posts several of them retweet, with their comments (see
+    `shared_retweets`); then the others as `_render_items` shows them."""
+    groups, rest = shared_retweets(items)
+    lines: list[str] = []
+    for group in groups:
+        lines += (["---", ""] if lines else []) + _retweeted_block(group)
+    others = _render_items(rest, priority_sources)
+    return lines + (["---", ""] if lines and others else []) + others
 
 
 def fetch_note(report: FetchReport | None) -> str:
@@ -520,7 +649,7 @@ def build_quick(
 
         if band[PRIORITY]:
             lines += [f"### ★ Priority — {len(band[PRIORITY])}", ""]
-            lines += _render_items(band[PRIORITY], priority_sources)
+            lines += _render_priority(band[PRIORITY], priority_sources)
         if band[MEDIA]:
             lines += [f"### 🖼 Images — {len(band[MEDIA])}", ""]
             for _source, batch in _grouped_chronological(band[MEDIA], priority_sources):

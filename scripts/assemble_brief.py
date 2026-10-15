@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     topics = topics_by_section(items, usage_baseline(history))
 
     summaries: dict[str, str] = {}
-    kept, _dropped = summary_items(records, mapping, post_text, repeated, levels, config.recap_groups)
+    kept, _dropped, _repeats = summary_items(records, mapping, post_text, repeated, levels, config.recap_groups)
     inputs = section_inputs(kept, mapping, topics)
     if inputs and not args.no_summaries:
         system = load_section_prompt(language=config.language)
@@ -223,7 +223,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = brief.stats
     print(f"{run.name}: {len(items)} items in the digest, {s['summary_items']} summary items kept, "
-          f"{s['dropped_items']} dropped, {s['flagged_items']} marked with a warning, {s['trending_items']} trending; "
+          f"{s['dropped_items']} dropped, {s['repeated_items']} repeats dropped, "
+          f"{s['flagged_items']} marked with a warning, {s['trending_items']} trending; "
           f"{s['section_summaries']} section summaries, {s['louder_topics']} louder-than-usual names")
     if s["regular_posts"]:
         print(f"regular posts cited by a summary: {s['regular_posts_cited']} of {s['regular_posts']}; "

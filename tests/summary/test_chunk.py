@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from xmd.summary.chunk import (
-    DEFAULT_COMPRESSION, MIN_TARGET_WORDS, THEME_SHARES, Chunk, Post, estimate_tokens, make_chunks, parse_compression,
-    parse_export, tier_shares,
+    DEFAULT_COMPRESSION, MAX_THEME_IDS, MIN_TARGET_WORDS, THEME_SHARES, Chunk, Post, estimate_tokens, make_chunks,
+    parse_compression, parse_export, tier_shares,
 )
 from xmd.digest.export import build_export
 from xmd.core.models import FeedItem
@@ -121,7 +121,8 @@ def test_the_regular_share_is_the_compression_and_the_other_tiers_keep_their_fix
     assert DEFAULT_COMPRESSION == 0.30  # the daily run is scenario A
     for compression in (0.30, 0.10):
         assert tier_shares(compression)[RETWEET] == 0.04  # retweets rank below the handles' own posts
-        assert tier_shares(compression)[RECAP] == 0.12  # the recap group: 2% was "way too short", 6% "too summed up"
+        # the recap group: 2% was "way too short", 6% "too summed up", 12% grew with its two-sentence themes
+        assert tier_shares(compression)[RECAP] == 0.16
     assert THEME_SHARES[RECAP] > THEME_SHARES[RETWEET]  # but retweets stay the smaller share
 
 
@@ -161,23 +162,34 @@ def test_render_is_a_header_then_posts_under_section_headings_then_the_repeats()
     assert Chunk("retweets-01", RETWEET, (_p(1),), (), 20).band == "retweets"
 
 
+def test_only_a_recap_theme_is_told_how_many_posts_it_may_cite():
+    posts = tuple(_p(n) for n in range(1, 21))
+    recap = Chunk("recap-01", RECAP, posts, (), 120)
+    assert recap.max_ids == MAX_THEME_IDS
+    assert f"Length: at most 3 items, each theme citing at most {MAX_THEME_IDS} posts and about 120 words" in recap.render()
+    for tier in (REGULAR, RETWEET):
+        chunk = Chunk("x-01", tier, posts, (), 120)
+        assert chunk.max_ids is None and "citing" not in chunk.render()
+
+
 def test_the_item_limit_follows_the_target_at_each_tiers_item_length_and_never_exceeds_the_posts():
     many = tuple(_p(n) for n in range(1, 101))
     assert Chunk("r", REGULAR, many, (), 830).max_items == 28  # 830 / 30
     assert Chunk("t", RETWEET, many, (), 100).max_items == 3  # plain retweets are themes: 100 / 30
     assert Chunk("t", RETWEET, many, (), 393).max_items == 8  # and a handful at most
-    assert Chunk("c", RECAP, many, (), 251).max_items == 8  # 251 / 30 = 8
-    assert Chunk("c", RECAP, many, (), 500).max_items == 17  # a recap gets more themes than retweets: 500 / 30
+    assert Chunk("c", RECAP, many, (), 240).max_items == 6  # a recap theme is longer: 240 / 40
+    assert Chunk("c", RECAP, many, (), 520).max_items == 13  # a recap gets more themes than retweets: 520 / 40
     assert Chunk("c", RECAP, many, (), 900).max_items == 20  # still capped
     assert Chunk("r", REGULAR, many[:5], (), 830).max_items == 5  # not more items than posts
     assert Chunk("r", REGULAR, many[:5], (), 1).max_items == 1  # at least one
 
 
-def test_the_minimum_is_a_quarter_of_the_limit_and_at_least_one():
+def test_the_minimum_is_a_quarter_of_the_limit_a_half_for_recap_and_at_least_one():
     many = tuple(_p(n) for n in range(1, 101))
     assert Chunk("r", REGULAR, many, (), 830).min_items == 7  # 28 items -> 7
     assert Chunk("t", RETWEET, many, (), 393).min_items == 2  # 8 items -> 2
-    assert Chunk("c", RECAP, many, (), 251).min_items == 2
+    assert Chunk("c", RECAP, many, (), 240).min_items == 3  # 6 themes -> 3: 5 themes for 74 posts was too thin
+    assert Chunk("c", RECAP, many, (), 900).min_items == 10  # 20 -> 10
     assert Chunk("c", RECAP, many[:2], (), 20).min_items == 1
 
 

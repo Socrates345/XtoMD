@@ -53,6 +53,16 @@ def test_item_heading_combines_source_anchor_link_and_date():
     ) in md
 
 
+def test_item_heading_escapes_underscores_in_the_handle():
+    """An `_` in the handle would pair with the one in the link's URL and italicize the line between them."""
+    item = FeedItem(
+        source="@some_one_", source_type="x", title="hi", url="https://x.com/some_one_/status/1",
+        published=datetime(2026, 7, 8, 6, 1, tzinfo=timezone.utc), full_text="hi",
+    )
+    md = build_markdown([item], NOW)
+    assert f"#### @some\\_one\\_ <!-- item:{item.id} --> [Post Link](https://x.com/some_one_/status/1)" in md
+
+
 def test_falls_back_to_text_and_is_uncapped():
     items = [
         FeedItem(
@@ -388,6 +398,44 @@ def test_quick_digest_sorts_posts_into_bands_and_links_the_full_digest():
     assert "### Posts — 1\n\n- **@reg** · 07-08 06:03 · a regular post [↗](https://x.com/reg/status/3)" in md
     assert "### 🔁 Retweets — 1\n\n- 🔁 **@rt** → @orig · retweeted words [↗](https://x.com/rt/status/4)" in md
     assert "<details>" not in md  # plain markdown only: Obsidian's Live Preview can't fold it
+
+
+RETWEETED = "The central bank will cut rates by half a point next week, people familiar say"
+
+
+def test_a_post_several_priority_tweets_retweet_opens_the_priority_band_once_with_their_comments():
+    items = [
+        _post(1, "@vip1", "an earlier post of my own"),
+        _post(2, "@vip2", "", retweet_of_author="desk", retweet_of_text=RETWEETED, images=["https://img.example/1.jpg"]),
+        _post(3, "@vip3", "Huge if true", retweet_of_author="desk", retweet_of_text=RETWEETED),
+        _post(4, "@vip1", "Doubt it", retweet_of_author="Desk", retweet_of_text=RETWEETED[:50] + "…"),  # cut short
+        _post(5, "@vip4", "", retweet_of_author="other", retweet_of_text="retweeted only once"),
+    ]
+    md = build_quick(items, NOW, priority_sources=frozenset({"@vip1", "@vip2", "@vip3", "@vip4"}))
+    band = md.split("### ★ Priority — 5\n\n", 1)[1]
+
+    assert band.startswith(f"#### 🔁 @desk — retweeted 3 times\n\n{RETWEETED}\n\n![](https://img.example/1.jpg)\n\n")
+    assert band.count(RETWEETED[:40]) == 1  # shown once, not once per retweet
+    comments = band.split("\n\n---", 1)[0].splitlines()[-3:]
+    assert comments[0].startswith("- **@vip3** <!-- item:") and comments[0].endswith(
+        "· 07-08 06:03 · Huge if true [↗](https://x.com/vip3/status/3)")
+    assert comments[1].startswith("- **@vip1** <!-- item:") and "Doubt it" in comments[1]
+    assert comments[2].startswith("- 🔁 without a comment: [@vip2](https://x.com/vip2/status/2)")
+    # the rest as before: a post retweeted once stays where it was
+    assert band.index("an earlier post of my own") < band.index("🔁 Retweeted @other: retweeted only once")
+
+
+def test_a_retweeted_priority_tweet_heads_its_retweets_with_its_own_link():
+    items = [
+        _post(1, "@vip1", RETWEETED, author="vip1"),
+        _post(2, "@vip2", "Read this", retweet_of_author="vip1", retweet_of_text=RETWEETED),
+        _post(3, "@vip3", "", retweet_of_author="vip1", retweet_of_text=RETWEETED),
+    ]
+    md = build_quick(items, NOW, priority_sources=frozenset({"@vip1", "@vip2", "@vip3"}))
+    band = md.split("### ★ Priority — 3\n\n", 1)[1]
+    assert band.startswith(f"#### 🔁 @vip1 <!-- item:{items[0].id} --> [Post Link](https://x.com/vip1/status/1)"
+                           " · 2026-07-08 06:01 UTC — retweeted 2 times\n\n")
+    assert band.count(RETWEETED[:40]) == 1 and "\n---" not in band  # the post and both retweets are one block
 
 
 def test_quick_digest_is_much_shorter_than_the_full_one():

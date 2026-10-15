@@ -40,20 +40,28 @@ MIN_TARGET_WORDS = 20  # a tiny chunk still gets a usable allowance
 # a chunk's reply may have target / (words per item) items, at most the number of posts. Plain retweets
 # and the recap group are briefed as themes, so they get a capped number: a handful of retweet themes, and
 # more for a recap group, which the reader found far too short at 2% and 8 themes a chunk, and still too
-# summed up at 6% and 14: about 70 posts made 5 to 8 themes, each a mix of subjects.
-WORDS_PER_ITEM = {REGULAR: 30, RETWEET: 30, RECAP: 30}
+# summed up at 6% and 14: about 70 posts made 5 to 8 themes, each a mix of subjects. A recap theme is two
+# sentences since prompt v10 (at ~19 words of detail it was still too thin to understand), so it gets more words;
+# its share grew with them, so a chunk keeps the same number of themes.
+WORDS_PER_ITEM = {REGULAR: 30, RETWEET: 30, RECAP: 40}
 MAX_THEME_ITEMS = {RETWEET: 8, RECAP: 20}
 THEME_TIERS = tuple(MAX_THEME_ITEMS)
+# A recap theme cites at most this many posts. Asked to cite every post on a theme, Qwen made one theme per account
+# instead (2026-10-13: 56 of 294 themes cited more than 6 posts, one 76), each a thin sentence before a row of links.
+MAX_THEME_IDS = 5
 MIN_ITEMS_SHARE = 0.25  # fewer items than this share of the limit is not a summary of the chunk (1 item for 58 posts)
+# a recap chunk needs more: 5 themes passed for 74 posts, although the replies used about half their word target
+MIN_ITEMS_SHARES = {RECAP: 0.5}
 
 # What share of each tier's full-text words the brief may keep, before the level factor (docs/digest-summary.md, "Size and reading time"). For the
 # regular posts it is the run's compression ratio, summary words over source words (--compression in
 # scripts/run_system.py): 0.30 is the plan's scenario A, 0.10 its scenario B. Plain retweets and the recap group
 # are the least important, so they keep fixed, smaller shares; recap went 3% -> 2% -> 6% after the reader called
 # 2% "way too short", then 12% when 6% was "too summed up" to pick themes from (a theme per ~5 posts instead of
-# ~10). The plan's scenario C only changes how image tweets are shown, so it is no compression.
+# ~10), then 16% with its longer themes (WORDS_PER_ITEM). The plan's scenario C only changes how image tweets are
+# shown, so it is no compression.
 DEFAULT_COMPRESSION = 0.30
-THEME_SHARES = {RETWEET: 0.04, RECAP: 0.12}
+THEME_SHARES = {RETWEET: 0.04, RECAP: 0.16}
 
 
 def tier_shares(compression: float) -> dict[str, float]:
@@ -119,15 +127,21 @@ class Chunk:
     @property
     def min_items(self) -> int:
         """The fewest items a real summary of this chunk has; a reply below it is treated as a failure."""
-        return max(1, math.ceil(self.max_items * MIN_ITEMS_SHARE))
+        return max(1, math.ceil(self.max_items * MIN_ITEMS_SHARES.get(self.tier, MIN_ITEMS_SHARE)))
+
+    @property
+    def max_ids(self) -> int | None:
+        """How many posts one item may cite: a recap theme only a few, the other tiers no limit (None)."""
+        return MAX_THEME_IDS if self.tier == RECAP else None
 
     def render(self) -> str:
         """The user message: header, posts under their section headings, then the repeated-story hints."""
         lines = [f"Band: {self.band}"]
         if self.level != "normal":
             lines.append(f"Importance: {self.level}")
+        each = f", each theme citing at most {self.max_ids} posts" if self.max_ids else ""
         lines.append(
-            f"Length: at most {self.max_items} items and about {self.target_words} words in total, "
+            f"Length: at most {self.max_items} items{each} and about {self.target_words} words in total, "
             "all headlines and details together; shorter is fine."
         )
         section = None

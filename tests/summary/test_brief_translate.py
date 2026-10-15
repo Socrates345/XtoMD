@@ -75,3 +75,15 @@ def test_a_translated_trending_story_keeps_its_original_quoted_under_it():
                      ).markdown
     trending = md.split("## Trending", 1)[1].split("## X /", 1)[0]
     assert "— The central bank surprises with a half-point cut\n  > 🌐 *German:* Die Zentralbank" in trending
+
+
+def test_a_post_several_priority_tweets_retweet_and_their_comments_are_translated_with_the_originals_quoted():
+    items = [
+        _post(1, "@vip", "", group="finance", retweet_of_author="bank", retweet_of_text=ZH),
+        _post(2, "@vip2", DE, group="finance", retweet_of_author="bank", retweet_of_text=ZH),
+    ]
+    md = build_brief(items, NOW, [], {}, {}, [], priority_sources=frozenset({"@vip", "@vip2"}),
+                     translated=TRANSLATIONS.get).markdown
+    priority = md.split("## ★ Priority", 1)[1].split("## Trending", 1)[0]
+    assert f"\n\n{ZH_EN}\n\n> 🌐 *Chinese:* {ZH}\n\n- **@vip2**" in priority
+    assert f"{DE_EN} [↗](https://x.com/vip2/status/2) ⚠ not in the original: 12\n  > 🌐 *German:* {DE}\n" in priority

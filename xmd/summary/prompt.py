@@ -53,10 +53,13 @@ BRIEF_SCHEMA = {
     "additionalProperties": False,
 }
 
-def bounded_schema(min_items: int, max_items: int) -> dict:
-    """BRIEF_SCHEMA with the number of items limited in the schema itself, for servers that enforce it."""
+def bounded_schema(min_items: int, max_items: int, max_ids: int | None = None) -> dict:
+    """BRIEF_SCHEMA with the number of items limited in the schema itself, for servers that enforce it, and with
+    `max_ids` the number of posts one item may cite too (a recap theme, see chunk.MAX_THEME_IDS)."""
     schema = copy.deepcopy(BRIEF_SCHEMA)
     schema["properties"]["items"].update(minItems=min_items, maxItems=max_items)
+    if max_ids:
+        schema["properties"]["items"]["items"]["properties"]["ids"]["maxItems"] = max_ids
     return schema
 
 

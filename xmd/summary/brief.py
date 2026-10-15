@@ -2,13 +2,16 @@
 
 The model wrote summaries of chunks (see runner.py); this turns them into one markdown
 file a person reads, in the order of the reader's own ladder: priority tweeters first
-and in full, then trending stories, then each group's section, the most important
+and in full (a post several of them retweeted at their top, once, with their comments
+under it), then trending stories, then each group's section, the most important
 group first and the recap group last. A section holds its image tweets whole, the
 model's summary bullets (each linking to the tweets it draws on), and retweet themes.
 
 What the model wrote is never taken on trust:
 - cited post numbers that are not in the chunk are dropped, and an item left with no
   real source is dropped with them;
+- an item repeating an earlier one of its chunk (the model looping: same headline, or
+  in a looping reply the same cited posts) is dropped;
 - an item whose numbers, handles or tickers are in none of its cited posts is kept but
   marked with a warning, naming them;
 - a chunk that failed, or was never run, falls back to the quick digest's one-liners
@@ -31,15 +34,15 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
-from .chunk import LEVEL_ORDER
+from .chunk import LEVEL_ORDER, MAX_THEME_IDS
 from ..core.config import LANGUAGE_NAMES
 from ..core.models import URL, FeedItem, FetchReport
 from ..core.store import Store
 from ..digest.render import (
-    DEFAULT_MEDIA_CHARS, DEFAULT_RETWEET_CHARS, DEFAULT_SNIPPET_CHARS, Translated, _count, _fragment,
+    DEFAULT_MEDIA_CHARS, DEFAULT_RETWEET_CHARS, DEFAULT_SNIPPET_CHARS, Retweeted, Translated, _count, _fragment,
     _grouped_chronological, _inline, _line_text, _md, _not_in_original, _original_line, _post_line, _retweet_line,
-    _stories, _story_lines, _trending_block, body_md, fetch_note, fetch_report_lines, section_key, section_key_for,
-    section_label, sectioned,
+    _stories, _story_lines, _trending_block, body_md, fetch_note, fetch_report_lines, retweet_comments,
+    retweeted_heading, section_key, section_key_for, section_label, sectioned, shared_retweets, words_md,
 )
 from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
 from .topics import Topic
@@ -51,7 +54,7 @@ WPM_NORMAL = 230
 WPM_DIAGONAL = 400
 SECONDS_PER_IMAGE = 4
 LINES_PER_MINUTE = 40  # the reader's own pace, measured 2026-09-20: 200 lines in 5 minutes, links clicked included
-MAX_CITES = 4  # links shown per item; the rest are counted (a recap theme links them all)
+MAX_CITES = 4  # links shown per item; the rest are counted (a recap theme has its own cap, chunk.MAX_THEME_IDS)
 PRIORITY_LINE_CHARS = 280  # a priority tweet cut to one line (see Cuts) keeps about a tweet's worth
 
 _ITEM_ID = re.compile(r"<!-- item:([0-9a-f]+) -->")
@@ -216,21 +219,34 @@ def _section_of(ids: list[int], mapping: dict, levels: dict, recap_groups: froze
 def summary_items(
     records: list[dict], mapping: dict, post_text: dict[int, str], repeated: list[tuple[int, ...]],
     levels: dict[str, str], recap_groups: frozenset[str],
-) -> tuple[list[BriefItem], int]:
-    """(the checked items of every chunk that worked, how many were dropped for having no real source)."""
+) -> tuple[list[BriefItem], int, int]:
+    """(the checked items of every chunk that worked, how many were dropped for having no real source, how many
+    for repeating an earlier item of their chunk: the model looping, which on 2026-10-15 padded 6 stories out to
+    34 items). A repeated headline is a repeat; in a reply that repeats one, an item citing the same posts as an
+    earlier one is too, since a loop rewords as well as copies. Elsewhere two items citing one post are two
+    stories the post told (in the saved runs, such pairs shared few words)."""
     kept: list[BriefItem] = []
-    dropped = 0
+    dropped = repeats = 0
     stories = [set(group) for group in repeated]
     for record in records:
         if not record.get("ok") or record.get("reply") is None:
             continue
         chunk_ids = set(record["ids"])
-        for item in record["reply"]["items"]:
+        heads = [" ".join(re.findall(r"\w+", i["headline"].lower())) for i in record["reply"]["items"]]
+        looping = len(set(h for h in heads if h)) < len([h for h in heads if h])
+        seen_heads: set[str] = set()
+        seen_ids: set[frozenset[int]] = set()
+        for item, head in zip(record["reply"]["items"], heads):
             ids = list(dict.fromkeys(n for n in item["ids"] if n in chunk_ids))
             headline, detail = item["headline"].strip(), item["detail"].strip()
             if not ids or not (headline or detail):
                 dropped += 1
                 continue
+            if head in seen_heads or (looping and frozenset(ids) in seen_ids):
+                repeats += 1
+                continue
+            seen_heads |= {head} - {""}
+            seen_ids.add(frozenset(ids))
             flagged = support([{**item, "ids": ids}], {n: post_text[n] for n in ids if n in post_text}).flagged
             kept.append(BriefItem(
                 tier=record["tier"],
@@ -241,7 +257,7 @@ def summary_items(
                 trending=any(len(story & set(ids)) >= 2 for story in stories),
                 unsupported=flagged[0][1] if flagged else (),
             ))
-    return kept, dropped
+    return kept, dropped, repeats
 
 
 def _localized(item: FeedItem, translated: Translated | None) -> tuple[FeedItem, list]:
@@ -263,17 +279,17 @@ def _localized(item: FeedItem, translated: Translated | None) -> tuple[FeedItem,
     return replace(item, **changes), [t for t in (own, quoted) if t]
 
 
-def _quoted_original(item: FeedItem, found: list) -> list[str]:
-    """A translated priority tweet's original, whole, as a quote under the translation."""
+def _quoted_original(original: str, found: list) -> list[str]:
+    """A translated priority tweet's `original` markdown, whole, as a quote under the translation."""
     names = ", ".join(dict.fromkeys(LANGUAGE_NAMES.get(t.lang, t.lang) for t in found))
-    text = f"🌐 *{names}:* {body_md(item)}"
+    text = f"🌐 *{names}:* {original}"
     return [f"> {line}" if line else ">" for line in text.split("\n")] + [""]
 
 
 def _priority_block(item: FeedItem, translated: Translated | None = None) -> list[str]:
     """A priority tweet in full, like render._item_block but with its pictures first and a blank line after
     each, and the text below them as their caption; translated, with the original quoted under it."""
-    heading = f"#### {item.source} <!-- item:{item.id} --> [Post Link]({item.url})"
+    heading = f"#### {_md(item.source)} <!-- item:{item.id} --> [Post Link]({item.url})"
     if item.published:
         heading += f" · {item.published.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC"
     lines = [heading, ""]
@@ -282,15 +298,51 @@ def _priority_block(item: FeedItem, translated: Translated | None = None) -> lis
     shown, found = _localized(item, translated)
     body = body_md(shown)
     if found:
-        return lines + [body + _not_in_original(found), ""] + _quoted_original(item, found)
+        return lines + [body + _not_in_original(found), ""] + _quoted_original(body_md(item), found)
     return lines + ([body, ""] if body else [])
+
+
+def _retweeted_block(group: Retweeted, translated: Translated | None = None) -> list[str]:
+    """A post several priority tweets retweet, like _priority_block (pictures first, translated with the original
+    quoted under it), with what each of them said about it listed below."""
+    lines = [retweeted_heading(group), ""]
+    for image in group.images:
+        lines += [f"![]({image})", ""]
+    if group.original:
+        shown, found = _localized(group.original, translated)
+        body, original = body_md(shown), body_md(group.original)
+    else:
+        found = [t for t in [translated(group.text) if translated else None] if t]
+        body, original = words_md(found[0].text if found else group.text), words_md(group.text)
+    if found:
+        lines += [body + _not_in_original(found), ""] + _quoted_original(original, found)
+    elif body:
+        lines += [body, ""]
+    return lines + retweet_comments(group, translated) + [""]
+
+
+def _retweeted_one_liner(group: Retweeted, translated: Translated | None = None) -> list[str]:
+    """A post several priority tweets retweet as one line, with what each of them said one line each under it."""
+    found = translated(group.text) if translated else None
+    link = f" [↗]({group.original.url})" if group.original else ""
+    lines = [f"- 🔁 **@{_md(group.author.lstrip('@'))}** — retweeted {_count(len(group.retweets), 'time')}"
+             f" · {_inline(found.text if found else group.text, PRIORITY_LINE_CHARS)}{link}"
+             + (_not_in_original([found]) if found else "")]
+    if found:
+        lines.append(_original_line([found], group.text, PRIORITY_LINE_CHARS, indent="  "))
+    return lines + retweet_comments(group, translated, PRIORITY_LINE_CHARS, indent="  ")
 
 
 def _render_priority(
     items: list[FeedItem], priority_sources: frozenset[str], translated: Translated | None = None,
 ) -> list[str]:
+    """Priority tweets in full: first, once each, the posts several of them retweet, with their comments (see
+    render.shared_retweets); then the others, by source."""
+    groups, rest = shared_retweets(items)
     lines: list[str] = []
-    for _source, batch in _grouped_chronological(items, priority_sources):
+    for group in groups:
+        lines += (["---", ""] if lines else []) + _retweeted_block(group, translated)
+    for _source, batch in _grouped_chronological(rest, priority_sources):
         for item in batch:
             lines += (["---", ""] if lines else []) + _priority_block(item, translated)
     return lines
@@ -315,22 +367,23 @@ def _cites(ids: tuple[int, ...], mapping: dict) -> str:
     return " · ".join(links) + (f" +{len(ids) - MAX_CITES}" if len(ids) > MAX_CITES else "")
 
 
-def _all_cites(ids: tuple[int, ...], mapping: dict) -> str:
-    """Every cited post as a link, for a recap theme, which the reader picks to open its posts: a source's
-    posts together, its name linking the first and a number each of the others."""
+def _theme_cites(ids: tuple[int, ...], mapping: dict) -> str:
+    """A recap theme's posts as links, for the reader who picks it to open them: a source's posts together, its
+    name linking the first and a number each of the others. Past MAX_THEME_IDS (a server that ignored the schema,
+    a run made before the cap) the rest are only counted."""
     by_source: dict[str, list[str]] = defaultdict(list)
-    for n in ids:
+    for n in ids[:MAX_THEME_IDS]:
         by_source[mapping[str(n)]["source"]].append(mapping[str(n)]["url"])
     return " · ".join(
         " ".join(f"[{k + 1 if k else _md(source)}]({url})" for k, url in enumerate(urls))
-        for source, urls in by_source.items())
+        for source, urls in by_source.items()) + (f" +{len(ids) - MAX_THEME_IDS}" if len(ids) > MAX_THEME_IDS else "")
 
 
 def _item_line(item: BriefItem, mapping: dict) -> str:
     line = ("🔥 " if item.trending else "") + f"**{_inline(item.headline, 0)}**"
     if item.detail:
         line += f" — {_inline(item.detail, 0)}"
-    line += f" ({(_all_cites if item.tier == RECAP else _cites)(item.ids, mapping)})"
+    line += f" ({(_theme_cites if item.tier == RECAP else _cites)(item.ids, mapping)})"
     if item.unsupported:
         line += f" ⚠ not in the cited posts: {_md(', '.join(item.unsupported))}"
     return f"- {line}"
@@ -385,7 +438,7 @@ def build_brief(
     topics, summaries = topics or {}, summaries or {}
     by_url = {i.url: i for i in items}
     tiers = {i.id: tier_of(i, priority_sources, recap_groups) for i in items}
-    kept, dropped = summary_items(records, mapping, post_text, repeated, levels, recap_groups)
+    kept, dropped, repeats = summary_items(records, mapping, post_text, repeated, levels, recap_groups)
     cuts = cuts or Cuts()
     words = Counter()  # by band, for the report
     band_minutes: Counter = Counter()  # by band, at the reader's pace: what a reading time is fitted with
@@ -467,7 +520,8 @@ def build_brief(
 
         if by_tier[RECAP]:
             recap_items = filed[(label_, RECAP)]
-            linked = len({n for i in recap_items for n in i.ids})  # the rest are in no theme: only the full digest has them
+            # the links shown; the rest are in no theme, or past a theme's cap: only the full digest has them
+            linked = len({n for i in recap_items for n in i.ids[:MAX_THEME_IDS]})
             picture = f"{_count(len(recap_items), 'theme')} linking {linked} of them" if recap_items else "no usable summary"
             note = (f"*Recap group: {_count(len(by_tier[RECAP]), 'item')} from "
                     f"{_count(len({i.source for i in by_tier[RECAP]}), 'source')}, {picture}.*")
@@ -486,8 +540,10 @@ def build_brief(
 
     priority = [i for i in items if tiers[i.id] == PRIORITY]
     if cuts.priority_one_liners:
-        one_liners = [line for _source, batch in _grouped_chronological(priority, priority_sources)
-                      for i in batch for line in _one_liner(i, PRIORITY_LINE_CHARS, translated)]
+        groups, rest = shared_retweets(priority)
+        one_liners = [line for group in groups for line in _retweeted_one_liner(group, translated)]
+        one_liners += [line for _source, batch in _grouped_chronological(rest, priority_sources)
+                       for i in batch for line in _one_liner(i, PRIORITY_LINE_CHARS, translated)]
         priority_body = ["*Cut to one line each to fit the reading time; the full tweets are behind the links.*",
                          "", *one_liners, ""]
     else:
@@ -521,6 +577,8 @@ def build_brief(
     notes = []
     if dropped:
         notes.append(f"{_count(dropped, 'summary item')} dropped: no cited post was in its chunk")
+    if repeats:
+        notes.append(f"{_count(repeats, 'summary item')} dropped: the model repeated an earlier item")
     flagged = sum(1 for i in kept if i.unsupported)
     if flagged:
         notes.append(f"{_count(flagged, 'summary item')} marked ⚠: a number, handle or ticker not in the posts it cites")
@@ -549,7 +607,7 @@ def build_brief(
         "minutes_normal": round(normal, 1), "minutes_diagonal": round(diagonal, 1),
         "bands": dict(words),
         "band_minutes": {name: round(m, 2) for name, m in band_minutes.items()},
-        "summary_items": len(kept), "dropped_items": dropped, "flagged_items": flagged,
+        "summary_items": len(kept), "dropped_items": dropped, "repeated_items": repeats, "flagged_items": flagged,
         "trending_items": sum(1 for i in kept if i.trending),
         "section_summaries": len(summaries), "louder_topics": sum(len(v) for v in topics.values()),
         "posts_without_summary": len(loose), "posts_absent_from_the_database": absent,

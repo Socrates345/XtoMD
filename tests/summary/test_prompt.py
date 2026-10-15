@@ -58,6 +58,12 @@ def test_the_bounded_schema_limits_the_items_and_leaves_the_original_alone():
     assert schema["properties"]["items"]["items"] == BRIEF_SCHEMA["properties"]["items"]["items"]
 
 
+def test_the_bounded_schema_can_limit_the_posts_one_item_cites_too():
+    ids = bounded_schema(2, 8, max_ids=5)["properties"]["items"]["items"]["properties"]["ids"]
+    assert ids == {"type": "array", "items": {"type": "integer"}, "maxItems": 5}
+    assert "maxItems" not in BRIEF_SCHEMA["properties"]["items"]["items"]["properties"]["ids"]
+
+
 def _objects(schema: dict):
     """Every object in a schema, the one inside an array included."""
     if schema.get("type") == "object":
@@ -69,8 +75,8 @@ def _objects(schema: dict):
 
 
 @pytest.mark.parametrize("schema", [
-    SECTION_SCHEMA, BRIEF_SCHEMA, bounded_schema(1, 5), DETECT_SCHEMA, TRANSLATE_SCHEMA,
-], ids=["section", "brief", "bounded brief", "detect", "translate"])
+    SECTION_SCHEMA, BRIEF_SCHEMA, bounded_schema(1, 5), bounded_schema(1, 5, max_ids=5), DETECT_SCHEMA, TRANSLATE_SCHEMA,
+], ids=["section", "brief", "bounded brief", "bounded recap", "detect", "translate"])
 def test_every_object_in_a_schema_takes_all_its_keys_and_no_other_as_a_hosted_strict_mode_demands(schema):
     found = list(_objects(schema))
     assert found
