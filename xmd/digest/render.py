@@ -35,7 +35,8 @@ still, and the bands the reader asked to keep whole (priority sources' tweets,
 image tweets) shown in full. A post that several priority tweets retweet or
 quote opens the priority band, shown once with their comments listed under it
 (see `shared_retweets`). A recap group (see tiers.py) collapses to a count
-and its repeated stories, leaving the per-tweet detail to the full file. It
+and its repeated stories, leaving the per-tweet detail to the full file; its
+image tweets are still shown whole. It
 uses plain headings, lists and links only — no `<details>` — for the same
 Obsidian reasons as above.
 """
@@ -53,7 +54,7 @@ from urllib.parse import quote
 
 from ..core.config import LANGUAGE_NAMES
 from ..core.models import URL, FeedItem, FetchReport, is_echo
-from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
+from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, in_recap_group, tier_of
 from .trending import DEFAULT_SIMILARITY, Story, find_stories
 
 PLATFORM_LABELS = {"x": "X"}
@@ -608,13 +609,14 @@ def build_quick(
     sections = sectioned(items)
     full_link = f"[{full_name}]({full_name})" if full_name else ""
 
-    # a story made only of recap-group posts belongs to that group's section;
-    # one that also touches anything else is a story for the whole digest
+    # a story made only of recap-group posts (its image tweets included) belongs
+    # to that group's section; one that also touches anything else is a story
+    # for the whole digest
     stories = find_stories(items, similarity)
     recap_stories: dict[str, list[Story]] = defaultdict(list)
     general: list[Story] = []
     for story in stories:
-        if all(tiers[i.id] == RECAP for i in story.items):
+        if all(tiers[i.id] != PRIORITY and in_recap_group(i, recap_groups) for i in story.items):
             recap_stories[section_key(story.items[0])].append(story)
         else:
             general.append(story)
@@ -674,9 +676,9 @@ def build_quick(
                 f" {_count(recap_sources, 'source')}, collapsed.*"
             )
             lines += [note + (f" Full text: {full_link}" if full_link else ""), ""]
-            if recap_stories[key]:
-                lines += [f"**Repeated in this group — {len(recap_stories[key])}**", ""]
-                lines += _story_lines(recap_stories[key], priority_sources, snippet_chars)
-                lines.append("")
+        if recap_stories[key]:  # even with no post left to collapse: a story of its image tweets alone
+            lines += [f"**Repeated in this group — {len(recap_stories[key])}**", ""]
+            lines += _story_lines(recap_stories[key], priority_sources, snippet_chars)
+            lines.append("")
     lines += fetch_report_lines(fetch_report, now)
     return "\n".join(lines)

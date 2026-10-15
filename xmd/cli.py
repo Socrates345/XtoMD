@@ -17,7 +17,7 @@ from .digest.export import build_export
 from .ingest.fetcher import FetchResult, fetch_all
 from .core.models import FeedItem, FetchReport
 from .digest.render import build_markdown, build_quick
-from .core.store import Store
+from .core.store import KEEP_DAYS, Store
 
 EXPORT_DIRNAME = ".export"  # dot-dir under digest_dir: invisible to Obsidian
 DEFAULT_LOOP_SECONDS = 900  # 15 min
@@ -117,10 +117,22 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
         gap_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(last_run_at)).total_seconds() / 3600
         override = int(min(gap_hours, SINCE_RUN_MAX_HOURS)) + 1
 
-    result = await fetch_all(config, progress=progress, x_max_age_hours_override=override)
+    def known(ids: set[str]) -> set[str]:  # a thread's first tweet stored by an earlier fetch: see filters.py
+        store = Store(config.storage)
+        try:
+            return store.statuses(ids)
+        finally:
+            store.close()
+
+    result = await fetch_all(config, progress=progress, x_max_age_hours_override=override, known=known)
+    horizon = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)
+    # a quiet account's newest tweet comes back on every fetch however old it is (the adapters' fallback_latest):
+    # stored, it would be forgotten KEEP_DAYS later and stored again as new, so one from before the horizon never is
+    kept = [i for i in result.items if i.published is None or i.published >= horizon]
     store = Store(config.storage)
     try:
-        new = store.add_items(result.items)
+        store.forget(horizon)
+        new = store.add_items(kept)
         now = datetime.now(timezone.utc)
         store.set_meta("last_run_at", now.isoformat())
         # the next digest carries it, into the brief too: a timer's run has no one reading its log

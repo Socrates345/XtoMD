@@ -84,6 +84,30 @@ def test_twitterapi_fetch(monkeypatch):
     assert items[0].source_type == "x"
 
 
+def test_twitterapi_reply_to_the_poster_s_own_tweet_names_its_thread_s_first_tweet(monkeypatch):
+    from xmd.ingest.adapters import twitterapi as twitterapi_adapter
+
+    def tweet(id_: str, conversation: str, reply_to: str = "", **extra) -> dict:
+        return {
+            "id": id_, "conversationId": conversation, "url": f"https://x.com/someone/status/{id_}",
+            "text": f"tweet {id_}", "createdAt": "Tue Dec 10 07:00:30 +0000 2024", "author": {"userName": "Someone"},
+            "isReply": bool(reply_to), "inReplyToUsername": reply_to or None, **extra,
+        }
+
+    page = {"status": "success", "has_next_page": False, "data": {"tweets": [
+        tweet("3", "1", reply_to="someone"),  # continues @someone's own thread
+        tweet("1", "1"),  # the thread's first tweet
+        tweet("5", "4", reply_to="other"),  # a reply in someone else's conversation
+        tweet("6", "4", retweeted_tweet={"text": "theirs", "author": {"userName": "other"}}),
+    ]}}
+    monkeypatch.setattr(twitterapi_adapter.httpx, "get", lambda *a, **kw: FakeJsonResponse(page))
+
+    items = twitterapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    assert [i.thread_root for i in items] == ["1", "", "", ""]
+
+
 def test_bare_retweet_echo_text_is_not_treated_as_added_comment(monkeypatch):
     """twitterapi.io doesn't distinguish a bare retweet from a quote-tweet:
     a bare retweet's own `text` field carries X's auto-generated, truncated

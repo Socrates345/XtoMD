@@ -195,7 +195,7 @@ Venice's retention is a promise that cannot be checked from outside. Handles are
 - **The timer's unit is sandboxed:** it can write inside the repo only (`ProtectSystem=strict`), gets a private `/tmp` and cannot gain privileges.
 - **SSH is by key only** and is the only open port.
 - **`.env` is readable by its owner only** (`chmod 600`) and is git-ignored.
-- **`XMD_KEEP_DAYS`** keeps old briefs, exports and runs off the rented disk. The database is not pruned.
+- **`XMD_KEEP_DAYS`** keeps old briefs, exports and runs off the rented disk. The database prunes itself on every fetch, whatever this says (`KEEP_DAYS` in `xmd/core/store.py`).
 
 Not covered: the VPS host can read its own disk, and agents you later run on the same server can read this app's files unless they run as another user.
 

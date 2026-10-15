@@ -112,7 +112,7 @@ def _title(tweet: dict) -> str:
         return f"RT @{author}: {original}" if author else text
     reply_to = tweet.get("replyTo")
     if reply_to:
-        target = (reply_to.get("author") or {}).get("username", "")
+        target = reply_to.get("username", "")  # {"tweetId", "userId", "username"}, seen live
         if target:
             return f"R to @{target}: {text}"
     return text
@@ -131,6 +131,17 @@ def _retweet_of(tweet: dict) -> tuple[str, str]:
         return "", ""
     text = " ".join(str(wrapped.get("text", "")).split())
     return author, text
+
+
+def _thread_root(tweet: dict) -> str:
+    """The id of the first tweet of the thread `tweet` continues, "" when it starts one or stands alone: every
+    tweet of a thread carries the first one's id as its conversationId (seen live). Only a reply to the poster's
+    own tweet continues their thread; a retweet carries the retweeted post's conversation."""
+    target = str((tweet.get("replyTo") or {}).get("username") or "").lower()
+    if tweet.get("retweetedTweet") or not target or target != str((tweet.get("author") or {}).get("username") or "").lower():
+        return ""
+    root = str(tweet.get("conversationId") or "")
+    return root if root and root != str(tweet.get("id") or "") else ""
 
 
 def _added_comment(tweet: dict, retweet_of_author: str, retweet_of_text: str = "") -> str:
@@ -301,6 +312,7 @@ def fetch(
                 group=source.group,
                 retweet_of_author=retweet_of_author,
                 retweet_of_text=retweet_of_text,
+                thread_root=_thread_root(tweet),
             )
             if fallback_item is None:
                 fallback_item = candidate  # newest-first: the very first is the newest

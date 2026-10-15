@@ -63,6 +63,17 @@ def _retweet_of(tweet: dict) -> tuple[str, str]:
     return author, original
 
 
+def _thread_root(tweet: dict) -> str:
+    """Mirrors adapters/tweetapi.py's _thread_root(): the id of the first tweet of the thread `tweet` continues
+    (its conversationId), "" when it starts one or stands alone, when it replies to someone else, or when it is a
+    retweet."""
+    target = str(tweet.get("inReplyToUsername") or "").lower()
+    if tweet.get("retweeted_tweet") or not target or target != str((tweet.get("author") or {}).get("userName") or "").lower():
+        return ""
+    root = str(tweet.get("conversationId") or "")
+    return root if root and root != str(tweet.get("id") or "") else ""
+
+
 def _added_comment(tweet: dict, retweet_of_author: str, retweet_of_text: str = "") -> str:
     """The retweeter's own added comment — empty for a bare retweet.
     twitterapi.io doesn't distinguish a bare retweet from a quote-tweet: both
@@ -206,6 +217,7 @@ def fetch(
                 group=source.group,
                 retweet_of_author=retweet_of_author,
                 retweet_of_text=retweet_of_text,
+                thread_root=_thread_root(tweet),
             )
             if fallback_item is None:
                 fallback_item = candidate  # newest-first: the very first is the newest

@@ -103,6 +103,15 @@ def test_image_tweets_take_turns_across_sections_by_level_and_across_sources():
     assert sorted(i.id for i in ranked) == sorted(i.id for i in MEDIA)
 
 
+def test_a_recap_groups_image_tweets_take_turns_as_a_low_groups_do_whatever_its_level():
+    chat = [_post(n, f"@c{n % 2}", f"meme {n}", group="chat", images=[f"https://img.example/{n}.jpg"])
+            for n in range(61, 71)]
+    news = [i for i in MEDIA if i.group == "news"]  # level low, as many image tweets
+    ranked = rank_media(chat + news, {**LEVELS, "chat": "high"}, frozenset({"chat"}))
+    assert sum(1 for i in ranked[:10] if i.group == "chat") == 5
+    assert sum(1 for i in rank_media(chat + news, LEVELS)[:10] if i.group == "chat") > 5  # not a recap group: normal
+
+
 def test_a_brief_that_fits_is_not_cut():
     cuts, brief = plan_cuts(_minutes(_build()) + 1, _build, MEDIA, LEVELS)
     assert cuts is None and brief.markdown == _build().markdown

@@ -12,7 +12,7 @@ from xmd.cli import (
 )
 from xmd.core.config import Config, Source
 from xmd.core.models import FeedItem, FetchReport
-from xmd.core.store import Store
+from xmd.core.store import KEEP_DAYS, Store
 from xmd.ingest.fetcher import FetchResult
 from xmd.summary.brief import digest_item_ids, load_item_ids
 
@@ -32,7 +32,7 @@ def test_fetch_to_store_forwards_progress_callback(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         seen["progress"] = progress
         return FetchResult([])
 
@@ -96,7 +96,7 @@ def test_render_progress_shows_no_eta_before_anything_finishes(capsys):
 def test_fetch_to_store_dedupes_and_records_last_run(tmp_path, monkeypatch):
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         return FetchResult([FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")])
 
     monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
@@ -113,10 +113,30 @@ def test_fetch_to_store_dedupes_and_records_last_run(tmp_path, monkeypatch):
     assert new_again == 0
 
 
+def test_fetch_to_store_lets_the_filters_ask_which_tweets_are_stored(tmp_path, monkeypatch):
+    """A thread's first tweet stored by an earlier fetch still takes its replies with it: see filters.py."""
+    from xmd import cli as cli_module
+
+    asked = {}
+
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+        asked["stored"] = known({"1", "2"})
+        return FetchResult([])
+
+    config = _config(tmp_path)
+    store = Store(config.storage)
+    store.add_items([FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/dave/status/1")])
+    store.close()
+    monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
+
+    asyncio.run(_fetch_to_store(config))
+    assert asked["stored"] == {"1"}
+
+
 def test_fetch_to_store_reports_failed_sources_and_still_stores_the_rest(tmp_path, monkeypatch, capsys):
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         return FetchResult(
             [FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")],
             [(Source(name="@alice", type="twitterapi", handle="alice"), "could not resolve @alice to a user id")],
@@ -150,7 +170,7 @@ def test_fetch_to_store_widens_lookback_after_a_long_gap(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         seen["override"] = x_max_age_hours_override
         return FetchResult([])
 
@@ -171,7 +191,7 @@ def test_fetch_to_store_narrows_lookback_for_a_recent_gap(tmp_path, monkeypatch)
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         seen["override"] = x_max_age_hours_override
         return FetchResult([])
 
@@ -192,7 +212,7 @@ def test_fetch_to_store_no_override_on_first_run(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         seen["override"] = x_max_age_hours_override
         return FetchResult([])
 
@@ -518,7 +538,7 @@ def test_sources_lists_each_handle_with_its_group_and_its_options(monkeypatch, c
 def test_a_fetch_whose_output_is_not_a_terminal_still_says_where_it_is(tmp_path, monkeypatch, capsys):
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         progress(1, 2)
         progress(2, 2)
         return FetchResult(items=[])
@@ -535,7 +555,7 @@ def test_a_fetch_whose_output_is_not_a_terminal_still_says_where_it_is(tmp_path,
 def _fetch_that_answers(monkeypatch, result: FetchResult) -> None:
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
         return result
 
     monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
@@ -578,6 +598,48 @@ def test_a_fetch_without_trouble_adds_nothing_to_the_digest(tmp_path, monkeypatc
 
     assert FetchReport.from_json(export_path.with_suffix(".fetch.json").read_text(encoding="utf-8")).clean
     assert "Fetch report" not in out_path.read_text(encoding="utf-8") + quick_path.read_text(encoding="utf-8")
+
+
+def test_a_fetch_forgets_what_was_fetched_too_long_ago_and_does_not_store_it_again(tmp_path, monkeypatch):
+    now = datetime.now(timezone.utc)
+    quiet = FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/dave/status/1",
+                     published=now - timedelta(days=KEEP_DAYS + 5))
+    config = _config(tmp_path)
+    store = Store(config.storage)
+    store.add_items([quiet])
+    store.conn.execute("UPDATE items SET fetched_at = ?", ((now - timedelta(days=KEEP_DAYS, hours=1)).isoformat(),))
+    store.conn.commit()
+    store.close()
+    # @dave has posted nothing since: the fetch still returns that newest tweet of theirs (fallback_latest)
+    fresh = FeedItem(source="@erin", source_type="x", title="t", url="https://x.com/erin/status/2",
+                     published=now - timedelta(hours=1))
+    _fetch_that_answers(monkeypatch, FetchResult([quiet, fresh]))
+
+    assert asyncio.run(_fetch_to_store(config)) == 1
+    store = Store(config.storage)
+    assert [i.url for i in store.recent_by_fetch(now - timedelta(days=365))] == [fresh.url]
+    store.close()
+
+
+def test_a_poster_silent_for_longer_than_the_database_keeps_is_shown_in_full_when_back(tmp_path, monkeypatch):
+    now = datetime.now(timezone.utc)
+    config = _config(tmp_path)
+    store = Store(config.storage)
+    for source, days in (("dave", KEEP_DAYS + 10), ("erin", 20)):  # the database has been fetching for a while
+        store.add_items([FeedItem(source=f"@{source}", source_type="x", title="t", url=f"https://x.com/{source}/status/1",
+                                  published=now - timedelta(days=days), full_text="an older post")])
+        store.conn.execute("UPDATE items SET fetched_at = ? WHERE source = ?",
+                           ((now - timedelta(days=days)).isoformat(), f"@{source}"))
+    store.conn.commit()
+    store.close()
+    _fetch_that_answers(monkeypatch, FetchResult([
+        FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/dave/status/2",
+                 published=now - timedelta(hours=1), full_text="dave is back"),
+    ]))
+
+    asyncio.run(_fetch_to_store(config))  # forgets dave's older post: nothing of his is left before this one
+    quick = _companions(_digest(config, "24h", quick=True))[0].read_text(encoding="utf-8")
+    assert "### ★ Priority — 1" in quick and "dave is back" in quick[quick.index("### ★ Priority"):]
 
 
 def test_a_digest_made_before_any_fetch_has_no_report_to_keep(tmp_path):

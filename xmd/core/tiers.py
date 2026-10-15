@@ -7,10 +7,11 @@ same except where a rule below says otherwise. First match wins:
             been silent for more than SILENCE_DAYS (a plain retweet doesn't
             count, a retweet with the poster's own comment does); always shown
             in full
+- media:    has images; kept whole, since a text model can't see an image and
+            a meme's point may not survive being paraphrased (in a recap
+            group too: the pictures help the reader along its themes)
 - recap:    from a group marked `recap:on` in sources/x.md; collapsed to the
             global picture, nothing per-tweet
-- media:    has images; kept whole, since a text model can't see an image and
-            a meme's point may not survive being paraphrased
 - retweet:  a plain retweet that adds no words of its own; one short line
 - regular:  everything else (originals, and quote-tweets with commentary)
 
@@ -35,22 +36,30 @@ SILENCE_DAYS = 15  # a poster this long without a post is worth reading in full 
 
 
 def mark_after_silence(
-    items: list[FeedItem], post_times: dict[str, list[datetime]], days: int = SILENCE_DAYS
+    items: list[FeedItem], post_times: dict[str, list[datetime]], days: int = SILENCE_DAYS,
+    history_start: datetime | None = None,
 ) -> int:
     """Set `after_silence` on each item whose poster's previous post came more than `days` days
-    earlier. `post_times` is {source: sorted publish times} (Store.post_times) and must hold each
-    item's previous post, however old; any post counts as a post, plain retweets too. A poster with no earlier
-    post in it is left alone: a source added yesterday looks exactly like one that has been
-    quiet for months, and promoting the first would flood the digest. Returns how many were set."""
+    earlier. `post_times` is {source: sorted publish times} (Store.post_times) and holds each
+    item's previous post while the database still has it; any post counts as a post, plain retweets too. A poster
+    with no earlier post in it has been silent at least since `history_start`, where the database's history begins
+    (it forgets what came before, see store.KEEP_DAYS): that is their previous post. Without one (an empty database)
+    such a poster is left alone. A handle added after that start is flagged on its first post: it looks exactly like
+    one that has been quiet that long. Returns how many were set."""
     marked = 0
     for item in items:
-        times = post_times.get(item.source)
-        if not times or item.published is None:
+        if item.published is None:
             continue
+        times = post_times.get(item.source, [])
         k = bisect_left(times, item.published)  # times[k - 1] is the latest strictly before this post
-        item.after_silence = k > 0 and item.published - times[k - 1] > timedelta(days=days)
+        previous = times[k - 1] if k else history_start
+        item.after_silence = previous is not None and item.published - previous > timedelta(days=days)
         marked += item.after_silence
     return marked
+
+
+def in_recap_group(item: FeedItem, recap_groups: frozenset[str]) -> bool:
+    return bool(item.group) and item.group in recap_groups
 
 
 def tier_of(
@@ -60,10 +69,10 @@ def tier_of(
 ) -> str:
     if item.source in priority_sources or (item.after_silence and not item.is_pure_retweet):
         return PRIORITY
-    if item.group and item.group in recap_groups:
-        return RECAP
     if item.images:
         return MEDIA
+    if in_recap_group(item, recap_groups):
+        return RECAP
     if item.is_pure_retweet:
         return RETWEET
     return REGULAR

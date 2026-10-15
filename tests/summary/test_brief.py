@@ -145,11 +145,10 @@ def test_two_stories_from_one_post_both_stay_when_the_reply_is_not_looping():
     assert "repeated an earlier item" not in brief.markdown
 
 
-def test_a_figure_in_none_of_the_cited_posts_is_marked_and_a_supported_one_is_not():
+def test_a_figure_in_none_of_the_cited_posts_is_not_marked():
     md = _brief().markdown
-    assert "⚠ not in the cited posts: 63" in next(l for l in md.splitlines() if "Council votes" in l)
-    assert "⚠" not in next(l for l in md.splitlines() if "Acme revenue jumps" in l)
-    assert _brief().stats["flagged_items"] == 1
+    assert "⚠" not in next(l for l in md.splitlines() if "Council votes" in l)
+    assert "marked ⚠" not in md
 
 
 def test_two_posts_of_one_repeated_story_make_a_bullet_trending():
@@ -178,6 +177,28 @@ def test_the_recap_group_is_only_a_picture_with_its_themes():
     recap = md[md.index("## X / chat"):]
     assert "Recap group: 2 items from 2 sources, 1 theme linking 2 of them.* [full digest](full.md)" in recap  # a short link, not a file name
     assert "**Chatter about chatter**" in recap and "chatter one" not in recap  # the posts themselves stay out
+
+
+def test_a_recap_groups_image_tweets_are_shown_whole_above_its_themes_and_never_sent_to_the_model():
+    items = ITEMS + [_post(11, "@c3", "a chart of the chatter", group="chat", images=["https://img.example/11.jpg"])]
+    text, mapping = build_export(items, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
+    assert "a chart of the chatter" not in text and len(mapping) == len(MAPPING)
+    md = build_brief(items, NOW, RECORDS, MAPPING, POST_TEXT, [], priority_sources=PRIORITY, recap_groups=RECAP,
+                     levels=LEVELS).markdown
+    recap = md[md.index("## X / chat"):]
+    assert recap.index("### 🖼 Images — 1") < recap.index("![](https://img.example/11.jpg)") < recap.index("### Recap")
+    assert "a chart of the chatter" in recap
+    assert "Recap group: 2 items from 2 sources" in recap  # the image tweet is not one of the collapsed posts
+
+
+def test_a_story_of_a_recap_groups_posts_and_its_image_tweets_stays_in_the_group():
+    story = "the moderators announced a brand new weekly community challenge for everyone tonight"
+    chat = [_post(1, "@c1", story, group="chat"), _post(2, "@c2", story + " soon", group="chat", images=["https://img.example/2.jpg"]),
+            _post(3, "@c3", story + " details", group="chat", images=["https://img.example/3.jpg"])]
+    md = build_brief(chat, NOW, [], {}, {}, [], recap_groups=RECAP).markdown
+    assert "## Trending" not in md and "**Repeated in this group — 1**" in md
+    alone = build_brief(chat[1:], NOW, [], {}, {}, [], recap_groups=RECAP).markdown  # nothing left to collapse
+    assert "## Trending" not in alone and "**Repeated in this group — 1**" in alone and "Recap group:" not in alone
 
 
 def test_a_recap_theme_links_a_few_of_its_posts_with_a_sources_posts_together():

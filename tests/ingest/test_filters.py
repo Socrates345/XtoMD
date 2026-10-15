@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from xmd.core.config import Config, Source
 from xmd.ingest.filters import apply_filters
 from xmd.core.models import FeedItem
@@ -48,6 +50,61 @@ def test_self_replies_kept_as_threads():
 def test_replies_toggle_off():
     items = [_item("R to @b: y")]
     assert len(apply_filters(items, _cfg(drop_replies=False))) == 1
+
+
+def _tweet(n: int, title: str, root: str = "") -> FeedItem:
+    """@carol's tweet `n`, posted at minute `n`; `root` = the first tweet of the thread it continues."""
+    return FeedItem(
+        source="@carol", source_type="x", title=title, author="carol", url=f"https://x.com/carol/status/{n}",
+        published=datetime(2026, 10, 15, 6, n, tzinfo=timezone.utc), thread_root=root,
+    )
+
+
+def _nothing_stored(ids: set[str]) -> set[str]:
+    return set()
+
+
+def test_a_thread_keeps_only_its_first_tweet(caplog):
+    items = [  # newest first, as the adapters hand them over
+        _tweet(3, "R to @carol: 3/ and that's it", root="1"),
+        _tweet(2, "R to @carol: 2/ more", root="1"),
+        _tweet(1, "1/ a thread"),
+    ]
+    with caplog.at_level("INFO", logger="xmd"):
+        kept = apply_filters(items, _cfg(), known=_nothing_stored)
+    assert [i.title for i in kept] == ["1/ a thread"]
+    assert "filtered out 2 of 3 tweet(s): 2 thread replies" in caplog.text
+
+
+def test_a_thread_whose_first_tweet_is_hidden_goes_whole():
+    items = [_tweet(2, "R to @carol: details", root="1"), _tweet(1, "a giveaway thread")]
+    assert apply_filters(items, _cfg(block_keywords=["giveaway"])) == []
+
+
+def test_a_thread_reply_goes_when_its_first_tweet_came_in_an_earlier_fetch():
+    asked = []
+
+    def stored(ids: set[str]) -> set[str]:
+        asked.append(ids)
+        return ids & {"1"}
+
+    items = [_tweet(3, "R to @carol: 3/", root="1"), _tweet(2, "R to @carol: 2/", root="1"), _tweet(9, "new post")]
+    kept = apply_filters(items, _cfg(), known=stored)
+    assert [i.title for i in kept] == ["new post"]
+    assert asked == [{"1"}]
+
+
+def test_the_oldest_reply_stands_in_for_a_first_tweet_never_seen():
+    """A late update to an old tweet that was never fetched still shows, once."""
+    items = [_tweet(5, "R to @carol: correction", root="1"), _tweet(4, "R to @carol: UPDATE: it shipped", root="1")]
+    kept = apply_filters(items, _cfg(), known=_nothing_stored)
+    assert [i.title for i in kept] == ["R to @carol: UPDATE: it shipped"]
+
+
+def test_thread_replies_go_even_when_replies_are_kept():
+    items = [_tweet(2, "R to @carol: 2/", root="1"), _tweet(1, "1/ a thread"), _tweet(3, "R to @dan: hi")]
+    kept = apply_filters(items, _cfg(drop_replies=False))
+    assert [i.title for i in kept] == ["1/ a thread", "R to @dan: hi"]
 
 
 def test_keyword_blocklist_case_insensitive():

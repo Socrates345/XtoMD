@@ -13,7 +13,7 @@ MAPPING = {str(n): {"source": f"@s{n}", "url": f"https://x.com/s{n}/status/{n}"}
 
 
 def _item(headline, detail, ids, section="X / business", tier="regular"):
-    return BriefItem(tier, section, headline, detail, tuple(ids), False, ())
+    return BriefItem(tier, section, headline, detail, tuple(ids), False)
 
 
 KEPT = [

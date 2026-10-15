@@ -50,6 +50,15 @@ def test_fetch_all_uses_configured_max_age_hours_by_default(monkeypatch):
     assert seen["max_age_hours"] == 48
 
 
+def test_fetch_all_drops_a_thread_reply_whose_first_tweet_is_stored(monkeypatch):
+    reply = FeedItem(source="@dave", source_type="x", title="R to @dave: 2/", author="dave",
+                     url="https://x.com/dave/status/2", thread_root="1")
+    monkeypatch.setattr(fetcher.twitterapi_adapter, "fetch", lambda source, *a, **kw: [reply])
+    config = Config(sources=[_x_source()], x_api_key="k")
+    assert asyncio.run(fetcher.fetch_all(config, known=lambda ids: ids)).items == []
+    assert asyncio.run(fetcher.fetch_all(config)).items == [reply]  # nothing stored: it stands in for the first
+
+
 def test_fetch_all_override_widens_lookback_without_changing_config(monkeypatch):
     seen = {}
 

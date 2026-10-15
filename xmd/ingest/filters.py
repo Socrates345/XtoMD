@@ -5,13 +5,19 @@ X noise is detected by title prefix: the adapters tag retweets "RT @user:"
 and replies "R to @user:" (see adapters/twitterapi.py _title()). The
 settings in sources.yaml (`filters:`) apply to every source; a source's own
 `reposts:off`, `only:` and `hide:` (sources/x.md) add to them for its tweets.
+
+A poster's thread is one post: its first tweet. The tweets that continue it
+(`FeedItem.thread_root`) are always dropped, whatever `drop_replies` says,
+unless the first tweet is neither in this fetch nor stored: then the oldest of
+them stands in for it, so a late update to an old tweet still shows.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from datetime import datetime, timezone
 from functools import lru_cache
 
 from ..core.config import Config, Source
@@ -23,7 +29,10 @@ RETWEET_PREFIXES = ("RT by @", "RT @")
 REPLY_PREFIXES = ("R to @",)
 
 # why an item is filtered out, in the order the count names them
-RETWEETS, REPLIES, HIDDEN, NOT_ONLY, DUPLICATES = "retweets", "replies", "hidden keywords", "outside only:", "duplicates"
+THREADS, RETWEETS, REPLIES, HIDDEN, NOT_ONLY, DUPLICATES = (
+    "thread replies", "retweets", "replies", "hidden keywords", "outside only:", "duplicates")
+
+_STATUS = re.compile(r"/status/(\d+)")
 
 # a keyword counts from the start of a word: no Latin letter (accented or not) or digit right before it, so "ad"
 # finds "ad", "ads" and "#ad" but not "made". Scripts written without spaces (Chinese, Japanese) are not held to it.
@@ -41,9 +50,30 @@ def _mentions(parts: list[str], keywords: Iterable[str]) -> bool:
     return any(_keyword(kw).search(part) for kw in keywords for part in parts)
 
 
+def _thread_replies(items: list[FeedItem], known: Callable[[set[str]], set[str]] | None) -> set[int]:
+    """The positions in `items` of the tweets that continue a thread whose first tweet is in `items` or, by `known`,
+    stored; of the ones whose first tweet is in neither, all but the oldest. Run on the whole fetch, so a thread
+    whose first tweet a keyword hides goes with it."""
+    fetched = {m.group(1) for i in items if (m := _STATUS.search(i.url))}
+    threads: dict[str, list[int]] = {}
+    for k, item in enumerate(items):
+        if item.thread_root:
+            threads.setdefault(item.thread_root, []).append(k)
+    missing = set(threads) - fetched
+    shown = fetched | (known(missing) if known and missing else set())
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    drop: set[int] = set()
+    for root, ks in threads.items():
+        if root not in shown:
+            ks = sorted(ks, key=lambda k: items[k].published or oldest)[1:]
+        drop.update(ks)
+    return drop
+
+
 def _is_self_reply(item: FeedItem, title: str) -> bool:
     """A reply to the author's own account is a thread continuation, not
-    conversation noise — threads must survive drop_replies."""
+    conversation noise, so drop_replies leaves it alone: _thread_replies
+    decides whether it goes."""
     for prefix in REPLY_PREFIXES:
         if title.startswith(prefix):
             target = title[len(prefix):].split(":", 1)[0].strip().lstrip("@").lower()
@@ -102,12 +132,16 @@ def _dedup_by_text(items: list[FeedItem]) -> list[FeedItem]:
     return kept
 
 
-def apply_filters(items: list[FeedItem], config: Config) -> list[FeedItem]:
+def apply_filters(
+    items: list[FeedItem], config: Config, known: Callable[[set[str]], set[str]] | None = None,
+) -> list[FeedItem]:
+    """`known` answers which of some tweet ids are already stored (see Store.statuses); None = nothing is."""
     sources = {s.name: s for s in config.sources}  # an item names its source by display name, as `priority_sources` does
-    dropped = dict.fromkeys((RETWEETS, REPLIES, HIDDEN, NOT_ONLY, DUPLICATES), 0)
+    dropped = dict.fromkeys((THREADS, RETWEETS, REPLIES, HIDDEN, NOT_ONLY, DUPLICATES), 0)
+    threads = _thread_replies(items, known)
     passed = []
-    for item in items:
-        reason = _drop_reason(item, config, sources.get(item.source))
+    for k, item in enumerate(items):
+        reason = THREADS if k in threads else _drop_reason(item, config, sources.get(item.source))
         if reason:
             dropped[reason] += 1
         else:

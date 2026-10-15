@@ -1,8 +1,8 @@
 """SQLite persistence: dedupe fetched items, track the last successful run.
 
-Deliberately keeps every row forever — no purge, no delivered/undelivered
-flag. This is a personal tweet archive, not a delivery queue: `xmd digest`
-just re-queries a time window every time, so there's nothing to "mark seen."
+Keeps a tweet KEEP_DAYS after fetching it, then forgets it (`Store.forget`,
+run by every `xmd fetch`). No delivered/undelivered flag: `xmd digest` just
+re-queries a time window every time, so there's nothing to "mark seen."
 """
 
 from __future__ import annotations
@@ -14,6 +14,12 @@ from pathlib import Path
 
 from .models import FeedItem
 from .tiers import SILENCE_DAYS, mark_after_silence
+
+# what xmd.db keeps: a tweet fetched longer ago than this is deleted, and one published longer ago is never stored.
+# The digests read back HISTORY_DAYS (scripts/assemble_brief.py) before their window and SILENCE_DAYS before it, so
+# this must stay above both (tests/core/test_store.py checks it). A poster with nothing left in it has been silent
+# since its oldest fetch, longer than SILENCE_DAYS: their return is flagged (tiers.mark_after_silence)
+KEEP_DAYS = 30
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -81,6 +87,15 @@ class Store:
         self.conn.commit()
         return cur.rowcount
 
+    def forget(self, before: datetime) -> int:
+        """Delete every item fetched before `before` and return how many. The file is then rewritten (VACUUM): a
+        deleted row's text otherwise stays in the file's free pages."""
+        cur = self.conn.execute("DELETE FROM items WHERE fetched_at < ?", (before.isoformat(),))
+        self.conn.commit()
+        if cur.rowcount:
+            self.conn.execute("VACUUM")
+        return cur.rowcount
+
     def recent(self, since: datetime) -> list[FeedItem]:
         """All items published (or, when undated, fetched) at/after `since`,
         newest first. Powers the "24h" window: a content-time filter."""
@@ -137,11 +152,17 @@ class Store:
     ) -> int:
         """Mark the items whose poster had been silent for more than `days` days (see
         tiers.mark_after_silence). Call it wherever a digest loads its items, before rendering:
-        the rest of the pipeline reads the flag through `tier_of`."""
+        the rest of the pipeline reads the flag through `tier_of`. The history starts at the oldest
+        fetch still stored: a poster with nothing stored since then had been silent since."""
         dated = [i.published for i in items if i.published]
         if not dated:
             return 0
-        return mark_after_silence(items, self.post_times(min(dated) - timedelta(days=days), fetched_by), days)
+        seen, extra = (" WHERE fetched_at <= ?", [fetched_by.isoformat()]) if fetched_by is not None else ("", [])
+        start = self.conn.execute(f"SELECT MIN(fetched_at) FROM items{seen}", extra).fetchone()[0]
+        return mark_after_silence(
+            items, self.post_times(min(dated) - timedelta(days=days), fetched_by), days,
+            datetime.fromisoformat(start) if start else None,
+        )
 
     def get_many(self, ids: list[str]) -> list[FeedItem]:
         """The stored items with these ids, newest first: a digest lists its items by id (`<!-- item:ID -->`),
@@ -154,6 +175,14 @@ class Store:
             ).fetchall()
             items += [_row_to_item(r) for r in rows]
         return sorted(items, key=lambda i: i.published or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+    def statuses(self, ids: set[str]) -> set[str]:
+        """The tweet ids among `ids` that a stored item is: its url ends `/status/<id>`. An item's own id is a hash
+        of its url, so the tweet id is what finds a tweet whatever form its url took."""
+        return {
+            i for i in ids
+            if self.conn.execute("SELECT 1 FROM items WHERE url LIKE ? LIMIT 1", (f"%/status/{i}",)).fetchone()
+        }
 
     def recent_by_fetch(self, since: datetime) -> list[FeedItem]:
         """All items *fetched* at/after `since`, regardless of when they

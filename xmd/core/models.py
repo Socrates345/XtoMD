@@ -65,6 +65,10 @@ class FeedItem:
     # for a bare retweet with nothing added) — see display_body().
     retweet_of_author: str = ""
     retweet_of_text: str = ""
+    # set by the adapters when this tweet continues one of the poster's threads: the status id of the thread's
+    # first tweet ("" for a first tweet or a tweet on its own). Never stored: only the fetch's filters need it,
+    # to keep a thread's first tweet and drop the rest (see filters.py).
+    thread_root: str = field(default="", compare=False)
     # derived, never stored: the poster had been silent for longer than tiers.SILENCE_DAYS before
     # this post. Set by Store.flag_after_silence when a digest loads its items, since only the
     # database knows what the poster did before (see tiers.py).

@@ -38,8 +38,9 @@ fetch:
 filters:
   drop_retweets: false   # include retweets (shown with a 🔁 line quoting
                          # the original) — set true to exclude them
-  drop_replies: true     # exclude replies (thread continuations to your own
-                         # tweets are always kept regardless)
+  drop_replies: true     # exclude replies to other accounts (a poster's
+                         # own thread is always cut to its first tweet,
+                         # whatever this says)
   block_keywords: []     # drop tweets that have any of these, counted from the
                          # start of a word (case-insensitive: "ad" finds "ads",
                          # not "made"), e.g. ["#ad", "giveaway"]. For one account

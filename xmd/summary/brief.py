@@ -44,10 +44,9 @@ from ..digest.render import (
     _stories, _story_lines, _trending_block, body_md, fetch_note, fetch_report_lines, retweet_comments,
     retweeted_heading, section_key, section_key_for, section_label, sectioned, shared_retweets, words_md,
 )
-from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of
+from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, in_recap_group, tier_of
 from .topics import Topic
 from ..digest.trending import DEFAULT_SIMILARITY, find_stories
-from .verify import support
 
 # the plan's reading-speed assumptions (docs/digest-summary.md, "Size and reading time")
 WPM_NORMAL = 230
@@ -75,7 +74,6 @@ class BriefItem:
     detail: str
     ids: tuple[int, ...]  # cited posts that really are in its chunk, without repeats
     trending: bool  # two or more of them are the same repeated story
-    unsupported: tuple[str, ...]  # numbers, handles and tickers in none of the cited posts
 
 
 @dataclass
@@ -247,7 +245,6 @@ def summary_items(
                 continue
             seen_heads |= {head} - {""}
             seen_ids.add(frozenset(ids))
-            flagged = support([{**item, "ids": ids}], {n: post_text[n] for n in ids if n in post_text}).flagged
             kept.append(BriefItem(
                 tier=record["tier"],
                 section=_section_of(ids, mapping, levels, recap_groups),
@@ -255,7 +252,6 @@ def summary_items(
                 detail=detail,
                 ids=tuple(ids),
                 trending=any(len(story & set(ids)) >= 2 for story in stories),
-                unsupported=flagged[0][1] if flagged else (),
             ))
     return kept, dropped, repeats
 
@@ -384,8 +380,6 @@ def _item_line(item: BriefItem, mapping: dict) -> str:
     if item.detail:
         line += f" — {_inline(item.detail, 0)}"
     line += f" ({(_theme_cites if item.tier == RECAP else _cites)(item.ids, mapping)})"
-    if item.unsupported:
-        line += f" ⚠ not in the cited posts: {_md(', '.join(item.unsupported))}"
     return f"- {line}"
 
 
@@ -454,11 +448,11 @@ def build_brief(
     loose = [by_url[m["url"]] for n, m in mapping.items() if int(n) not in covered and m["url"] in by_url]
     absent = sum(1 for m in mapping.values() if m["url"] not in by_url)
 
-    # stories: one made only of recap-group posts belongs to that group's section
+    # stories: one made only of recap-group posts (its image tweets included) belongs to that group's section
     recap_stories: dict[str, list] = defaultdict(list)
     general = []
     for story in find_stories(items, similarity):
-        if all(tiers[i.id] == RECAP for i in story.items):
+        if all(tiers[i.id] != PRIORITY and in_recap_group(i, recap_groups) for i in story.items):
             recap_stories[section_key(story.items[0])].append(story)
         else:
             general.append(story)
@@ -518,14 +512,16 @@ def build_brief(
             body += band("not summarized", block + [""])
             shown += len(left)
 
-        if by_tier[RECAP]:
+        if by_tier[RECAP] or recap_stories[key]:  # a story of its image tweets alone still goes here
             recap_items = filed[(label_, RECAP)]
-            # the links shown; the rest are in no theme, or past a theme's cap: only the full digest has them
-            linked = len({n for i in recap_items for n in i.ids[:MAX_THEME_IDS]})
-            picture = f"{_count(len(recap_items), 'theme')} linking {linked} of them" if recap_items else "no usable summary"
-            note = (f"*Recap group: {_count(len(by_tier[RECAP]), 'item')} from "
-                    f"{_count(len({i.source for i in by_tier[RECAP]}), 'source')}, {picture}.*")
-            block = ["### Recap", "", note + (f" [full digest]({full_name})" if full_name else ""), ""]
+            block = ["### Recap", ""]
+            if by_tier[RECAP]:
+                # the links shown; the rest are in no theme, or past a theme's cap: only the full digest has them
+                linked = len({n for i in recap_items for n in i.ids[:MAX_THEME_IDS]})
+                picture = f"{_count(len(recap_items), 'theme')} linking {linked} of them" if recap_items else "no usable summary"
+                note = (f"*Recap group: {_count(len(by_tier[RECAP]), 'item')} from "
+                        f"{_count(len({i.source for i in by_tier[RECAP]}), 'source')}, {picture}.*")
+                block += [note + (f" [full digest]({full_name})" if full_name else ""), ""]
             if recap_items:
                 block += [*(_item_line(i, mapping) for i in recap_items), ""]
             if recap_stories[key]:
@@ -579,9 +575,6 @@ def build_brief(
         notes.append(f"{_count(dropped, 'summary item')} dropped: no cited post was in its chunk")
     if repeats:
         notes.append(f"{_count(repeats, 'summary item')} dropped: the model repeated an earlier item")
-    flagged = sum(1 for i in kept if i.unsupported)
-    if flagged:
-        notes.append(f"{_count(flagged, 'summary item')} marked ⚠: a number, handle or ticker not in the posts it cites")
     if loose:
         notes.append(f"{_count(len(loose), 'post')} without a summary (chunk failed or not run)")
     if notes:
@@ -607,7 +600,7 @@ def build_brief(
         "minutes_normal": round(normal, 1), "minutes_diagonal": round(diagonal, 1),
         "bands": dict(words),
         "band_minutes": {name: round(m, 2) for name, m in band_minutes.items()},
-        "summary_items": len(kept), "dropped_items": dropped, "repeated_items": repeats, "flagged_items": flagged,
+        "summary_items": len(kept), "dropped_items": dropped, "repeated_items": repeats,
         "trending_items": sum(1 for i in kept if i.trending),
         "section_summaries": len(summaries), "louder_topics": sum(len(v) for v in topics.values()),
         "posts_without_summary": len(loose), "posts_absent_from_the_database": absent,

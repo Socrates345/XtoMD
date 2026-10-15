@@ -24,8 +24,8 @@ def _tier(item):
 def test_first_matching_tier_wins():
     everything = _item("@p", group="chat", images=["i.jpg"], retweet_of="x", own="")
     assert _tier(everything) == PRIORITY
-    assert _tier(_item(group="chat", images=["i.jpg"], retweet_of="x", own="")) == RECAP
-    assert _tier(_item(images=["i.jpg"], retweet_of="x", own="")) == MEDIA
+    assert _tier(_item(group="chat", images=["i.jpg"], retweet_of="x", own="")) == MEDIA  # pictures even in a recap group
+    assert _tier(_item(group="chat", retweet_of="x", own="")) == RECAP
     assert _tier(_item(retweet_of="x", own="")) == RETWEET
     assert _tier(_item()) == REGULAR
 
@@ -94,11 +94,21 @@ def test_any_post_resets_the_clock_a_plain_retweet_included():
     assert _mark([later], {"@a": [T0, retweet.published, later.published]}) == [False]
 
 
-def test_a_poster_with_no_earlier_post_is_left_alone():
-    first = _at(T0)
-    assert _mark([first], {"@a": [first.published]}) == [False]
-    assert _mark([first], {}) == [False]  # not in the history at all
-    assert _mark([_at(None)], {"@a": [T0]}) == [False]  # an undated post is never judged
+def test_a_poster_with_no_earlier_post_has_been_silent_since_the_history_starts():
+    first, second = _at(T0), _at(T0 + DAY)
+    times = {"@a": [first.published, second.published]}
+
+    def mark(start):
+        mark_after_silence([first, second], times, history_start=start)
+        return [first.after_silence, second.after_silence]
+
+    assert mark(T0 - timedelta(days=SILENCE_DAYS, minutes=1)) == [True, False]  # only the first post back
+    assert mark(T0 - timedelta(days=SILENCE_DAYS)) == [False, False]  # a history too short to tell
+    assert mark(None) == [False, False]  # nothing stored before: an empty database can't tell
+    alone = _at(T0)
+    assert mark_after_silence([alone], {}, history_start=T0 - 40 * DAY) == 1  # not in the post times at all
+    undated = _at(None)
+    assert mark_after_silence([undated], {}, history_start=T0 - 40 * DAY) == 0  # an undated post is never judged
 
 
 def test_each_poster_is_judged_on_their_own_history():

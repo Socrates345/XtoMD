@@ -458,6 +458,21 @@ def test_recap_group_collapses_to_a_count_and_its_repeated_stories():
     assert "## Trending" not in md  # a story of recap posts only lives in its own group
 
 
+def test_a_recap_groups_image_tweets_are_shown_whole_and_its_stories_with_them_stay_in_the_group():
+    items = [
+        _post(1, "@a", STORY, group="chat"),
+        _post(2, "@b", STORY + " sources say", group="chat", images=["https://img.example/2.jpg"]),
+        _post(3, "@c", "idle banter about something quite different entirely", group="chat"),
+    ]
+    md = build_quick(items, NOW, recap_groups=frozenset({"chat"}))
+    assert "### 🖼 Images — 1" in md and "  ![](https://img.example/2.jpg)" in md
+    assert "*Recap group: 2 items from 2 sources, collapsed.*" in md
+    assert "**Repeated in this group — 1**" in md and "## Trending" not in md
+    alone = build_quick(items[1:2] + [_post(4, "@d", STORY, group="chat", images=["https://img.example/4.jpg"])],
+                        NOW, recap_groups=frozenset({"chat"}))
+    assert "**Repeated in this group — 1**" in alone and "*Recap group:" not in alone  # nothing left to collapse
+
+
 def test_priority_posts_in_a_recap_group_are_still_shown_in_full():
     items = [_post(1, "@vip", "must read this", group="chat"), _post(2, "@a", "idle banter", group="chat")]
     md = build_quick(items, NOW, priority_sources=frozenset({"@vip"}), recap_groups=frozenset({"chat"}))

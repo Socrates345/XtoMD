@@ -37,6 +37,7 @@ from typing import Callable
 from .brief import LINES_PER_MINUTE, Brief, Cuts, pace_minutes
 from .chunk import DEFAULT_COMPRESSION, LEVEL_FACTORS, Chunk
 from ..core.models import FeedItem
+from ..core.tiers import in_recap_group
 from ..digest.render import section_key
 
 MAX_COMPRESSION = DEFAULT_COMPRESSION  # the compression when the summaries have the room: as without --time
@@ -109,10 +110,12 @@ def _newest_first(item: FeedItem) -> float:
     return -(item.published or datetime.min.replace(tzinfo=timezone.utc)).timestamp()
 
 
-def rank_media(media: list[FeedItem], levels: dict[str, str]) -> list[FeedItem]:
+def rank_media(
+    media: list[FeedItem], levels: dict[str, str], recap_groups: frozenset[str] = frozenset(),
+) -> list[FeedItem]:
     """Image tweets in the order they get room: in turn across sections, each taking a share in proportion to
-    its image tweets and its level (high x1.5, low x0.5), and within a section in turn across sources, each
-    source's newest first."""
+    its image tweets and its level (high x1.5, low x0.5; a recap group is always low), and within a section in
+    turn across sources, each source's newest first."""
     queues: dict[str, list[FeedItem]] = {}
     by_section: dict[str, dict[str, list[FeedItem]]] = defaultdict(lambda: defaultdict(list))
     for item in sorted(media, key=_newest_first):
@@ -120,7 +123,10 @@ def rank_media(media: list[FeedItem], levels: dict[str, str]) -> list[FeedItem]:
     for key, sources in by_section.items():
         turns = [list(q) for q in sources.values()]
         queues[key] = [q[k] for k in range(max(map(len, turns))) for q in turns if k < len(q)]
-    weight = {key: LEVEL_FACTORS.get(levels.get(q[0].group, "normal"), 1.0) * len(q) for key, q in queues.items()}
+    def level(item: FeedItem) -> str:
+        return "low" if in_recap_group(item, recap_groups) else levels.get(item.group, "normal")
+
+    weight = {key: LEVEL_FACTORS.get(level(q[0]), 1.0) * len(q) for key, q in queues.items()}
     taken = dict.fromkeys(queues, 0)
     ranked = []
     while any(taken[k] < len(q) for k, q in queues.items()):
@@ -143,9 +149,11 @@ def bare_cuts(minutes: float, full: Brief) -> Cuts:
 
 def plan_cuts(
     minutes: float, build: Callable[[Cuts | None], Brief], media: list[FeedItem], levels: dict[str, str],
+    recap_groups: frozenset[str] = frozenset(),
 ) -> tuple[Cuts | None, Brief]:
     """(what to leave out so the brief `build` makes fits `minutes`, and that brief). `build(cuts)` renders the
-    brief with those cuts; `media` are its image tweets. None when the whole brief fits. When even the barest
+    brief with those cuts; `media` are its image tweets, ranked by `levels` and `recap_groups` (see rank_media).
+    None when the whole brief fits. When even the barest
     brief (priority as one-liners, image tweets as links) does not fit, that is what comes back: it can be no
     shorter."""
     full = build(None)
@@ -164,7 +172,7 @@ def plan_cuts(
     # the image tweets share the slack: the first ones in turn get their pictures (a line and a few seconds each,
     # on top of their caption) out of PICTURE_SHARE of it, the next ones a line out of the rest, the others a link.
     # A line left over when every image tweet has one goes back to pictures.
-    ranked = rank_media(media, levels)
+    ranked = rank_media(media, levels, recap_groups)
     pictures, lined = [], []
     picture_room = slack * PICTURE_SHARE
     for item in ranked:

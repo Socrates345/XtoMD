@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         """The brief, cut to the reading time when there is one, and the cuts made."""
         if not minutes:
             return None, build(translated)
-        return plan_cuts(minutes, lambda cuts: build(translated, cuts), media, levels)
+        return plan_cuts(minutes, lambda cuts: build(translated, cuts), media, levels, config.recap_groups)
 
     cuts, _brief = fit()  # what to show decides what to translate; the fit is made again with the translations
     translations: dict = {}
@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     s = brief.stats
     print(f"{run.name}: {len(items)} items in the digest, {s['summary_items']} summary items kept, "
           f"{s['dropped_items']} dropped, {s['repeated_items']} repeats dropped, "
-          f"{s['flagged_items']} marked with a warning, {s['trending_items']} trending; "
+          f"{s['trending_items']} trending; "
           f"{s['section_summaries']} section summaries, {s['louder_topics']} louder-than-usual names")
     if s["regular_posts"]:
         print(f"regular posts cited by a summary: {s['regular_posts_cited']} of {s['regular_posts']}; "

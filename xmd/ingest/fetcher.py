@@ -97,6 +97,7 @@ async def fetch_all(
     config: Config,
     progress: Callable[[int, int], None] | None = None,
     x_max_age_hours_override: int | None = None,
+    known: Callable[[set[str]], set[str]] | None = None,
 ) -> FetchResult:
     """Fetch every source concurrently (bounded). A failing source logs a
     warning, contributes nothing and is named in the result's `failed` (a
@@ -104,7 +105,11 @@ async def fetch_all(
 
     `x_max_age_hours_override`, when given, replaces `config.x_max_age_hours`
     for this call only — backs the "since last run" AFK safeguard in cli.py,
-    which widens the lookback to cover a gap without persisting the change."""
+    which widens the lookback to cover a gap without persisting the change.
+
+    `known` answers which of some tweet ids are already stored, so a thread
+    whose first tweet came in an earlier fetch still loses its replies (see
+    filters.py); None = nothing is."""
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
     total = len(config.sources)
     done = 0
@@ -165,4 +170,4 @@ async def fetch_all(
     items = [item for batch, _, _ in results for item in batch]
     failed = [(s, why) for s, (_, why, _) in zip(config.sources, results) if why]
     not_found = frozenset(s.name for s, (_, _, gone) in zip(config.sources, results) if gone)
-    return FetchResult(apply_filters(items, config), failed, not_found, heard.lines)
+    return FetchResult(apply_filters(items, config, known), failed, not_found, heard.lines)

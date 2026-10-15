@@ -73,7 +73,7 @@ if [[ -n "${XMD_BRIEF_DEST:-}" ]]; then
 fi
 
 # a rented disk need not keep what has been read: the briefs and digests, the exports and the runs they came from
-# (the database stays: "louder than usual" is measured against its last 14 days)
+# (not the database: `xmd fetch` prunes it itself, see KEEP_DAYS in xmd/core/store.py)
 if [[ "${XMD_KEEP_DAYS:-}" =~ ^[0-9]+$ ]]; then
     find "$digests" -maxdepth 1 -type f -name '*.md' -mtime +"$XMD_KEEP_DAYS" -delete
     if [[ -d "$digests/.export" ]]; then

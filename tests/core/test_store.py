@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from xmd.core.models import FeedItem
-from xmd.core.store import Store
+from xmd.core.store import KEEP_DAYS, Store
 
 
 def _item(url: str, published=None, source="src") -> FeedItem:
@@ -20,6 +20,41 @@ def test_dedupe(tmp_path):
     assert store.add_items(items) == 2
     assert store.add_items(items) == 0  # same URLs -> ignored
     assert store.add_items([_item("https://a/3")]) == 1
+    store.close()
+
+
+def test_forget_deletes_what_was_fetched_before_the_horizon_and_frees_its_space(tmp_path):
+    store = Store(tmp_path / "t.db")
+    store.add_items([_item(f"https://a/{n}", source="x" * 10_000) for n in range(50)] + [_item("https://a/kept")])
+    store.conn.execute("UPDATE items SET fetched_at = '2026-08-01T00:00:00+00:00' WHERE url != 'https://a/kept'")
+    store.conn.commit()
+    full = (tmp_path / "t.db").stat().st_size
+    assert store.forget(datetime(2026, 9, 1, tzinfo=timezone.utc)) == 50
+    assert [i.url for i in store.recent_by_fetch(datetime(2000, 1, 1, tzinfo=timezone.utc))] == ["https://a/kept"]
+    assert (tmp_path / "t.db").stat().st_size < full / 10
+    assert store.forget(datetime(2026, 9, 1, tzinfo=timezone.utc)) == 0
+    store.close()
+
+
+def test_the_database_keeps_what_the_digests_read_back():
+    import sys
+    from pathlib import Path
+
+    from xmd.cli import SINCE_RUN_MAX_HOURS
+    from xmd.core.tiers import SILENCE_DAYS
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from assemble_brief import HISTORY_DAYS
+
+    assert KEEP_DAYS > HISTORY_DAYS + SINCE_RUN_MAX_HOURS / 24
+    assert KEEP_DAYS > SILENCE_DAYS + SINCE_RUN_MAX_HOURS / 24
+
+
+def test_statuses_names_the_tweet_ids_that_are_stored(tmp_path):
+    store = Store(tmp_path / "t.db")
+    store.add_items([_item("https://x.com/dave/status/100"), _item("https://x.com/dave/status/2000")])
+    assert store.statuses({"100", "000", "300"}) == {"100"}  # 000 only ends 2000's id
+    assert store.statuses(set()) == set()
     store.close()
 
 
@@ -156,6 +191,24 @@ def test_flag_after_silence_marks_the_first_post_back_from_the_database_history(
     assert store.flag_after_silence(window) == 1
     assert {i.url for i in window if i.after_silence} == {"https://a/back"}  # @b posted 2 days before, @c is unknown
     assert store.flag_after_silence([]) == 0
+    store.close()
+
+
+def test_a_poster_with_nothing_left_in_the_database_is_flagged_once_its_history_is_long_enough(tmp_path):
+    store = Store(tmp_path / "t.db")
+    now = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+    store.add_items([_item("https://a/now", now, "@a"), _item("https://b/before", now - timedelta(days=3), "@b"),
+                     _item("https://b/now", now, "@b")])
+    store.conn.execute("UPDATE items SET fetched_at = ?", (now.isoformat(),))
+    window = store.published_between(now - timedelta(hours=1), now + timedelta(hours=1))
+    assert store.flag_after_silence(window) == 0  # a database fetched for the first time can't tell
+
+    store.add_items([_item("https://c/old", now - timedelta(days=KEEP_DAYS - 1), "@c")])
+    store.conn.execute("UPDATE items SET fetched_at = ? WHERE url = 'https://c/old'",
+                       ((now - timedelta(days=KEEP_DAYS - 1)).isoformat(),))
+    assert store.flag_after_silence(window) == 1  # its history now starts long enough ago
+    assert {i.url for i in window if i.after_silence} == {"https://a/now"}  # @b posted 3 days before
+    assert store.flag_after_silence(window, fetched_by=now - timedelta(days=KEEP_DAYS)) == 0  # before any fetch
     store.close()
 
 

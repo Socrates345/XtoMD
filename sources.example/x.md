@@ -10,7 +10,8 @@
 //   hide:a, b         drops its tweets with one of these keywords
 // After a "## group" header, which splits the handles into sections:
 //   level:high        how much of the group the brief keeps: high, normal or low (default: normal)
-//   recap:on          a group only worth its overall picture; it ignores level (default: off)
+//   recap:on          a group only worth its overall picture, its image tweets still shown whole;
+//                     it ignores level (default: off)
 //   reposts:off       for every handle of the group that does not say reposts:on
 //   only:a, b         for every handle of the group, added to each handle's own
 //   hide:a, b         the same

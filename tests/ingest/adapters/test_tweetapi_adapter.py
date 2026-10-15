@@ -90,7 +90,7 @@ def test_reply_gets_prefixed_title(monkeypatch):
             {
                 "id": "1", "text": "reply text", "createdAt": "2026-07-08T06:00:00.000Z",
                 "author": {"username": "someone"},
-                "replyTo": {"author": {"username": "other"}},
+                "replyTo": {"tweetId": "7", "userId": "9", "username": "other"},  # the shape seen live
             },
         ]),
     ])
@@ -99,6 +99,34 @@ def test_reply_gets_prefixed_title(monkeypatch):
         Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
     )
     assert items[0].title == "R to @other: reply text"
+
+
+def test_a_reply_to_the_poster_s_own_tweet_names_its_thread_s_first_tweet(monkeypatch):
+    """Every tweet of a thread carries the first one's id as its conversationId, as a live lookup showed."""
+    def tweet(id_: str, conversation: str, reply_to: str = "", **extra) -> dict:
+        return {
+            "id": id_, "conversationId": conversation, "text": f"tweet {id_}",
+            "createdAt": "2026-07-08T06:00:00.000Z", "author": {"username": "Someone"},
+            "replyTo": {"tweetId": "x", "userId": "9", "username": reply_to} if reply_to else None, **extra,
+        }
+
+    _fake_calls(monkeypatch, [
+        _by_username(),
+        _tweets_page([
+            tweet("3", "1", reply_to="someone"),  # continues @someone's own thread
+            tweet("1", "1"),  # the thread's first tweet
+            tweet("5", "4", reply_to="other"),  # a reply in someone else's conversation
+            tweet("6", "4", retweetedTweet={"text": "theirs", "author": {"username": "other"}}),
+            {"id": "8", "text": "no conversation given", "createdAt": "2026-07-08T06:00:00.000Z",
+             "author": {"username": "someone"}, "replyTo": {"username": "someone"}},
+        ]),
+    ])
+
+    items = tweetapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    assert [i.thread_root for i in items] == ["1", "", "", "", ""]
+    assert items[0].title == "R to @someone: tweet 3"
 
 
 def test_retweet_keeps_retweeter_comment_and_original_separately(monkeypatch):
