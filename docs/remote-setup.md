@@ -204,7 +204,7 @@ cd XtoMD
 bash deploy/termux/setup.sh
 ```
 
-`setup.sh` installs Python and SSH, asks Android for access to your files (allow it), makes the virtual environment, creates `.env` from the template and creates the four buttons. It is safe to run again.
+`setup.sh` installs SSH, asks Android for access to your files (allow it), creates the four buttons and creates the phone's `.env`. It installs no Python and asks for no key: a button only sends a request, and the brief is made on the VPS with the VPS's `.env` (the phone's own is a separate file, see [remote.md](remote.md#how-it-works)). It is safe to run again.
 
 **Check:** it lists four names, the buttons [remote.md](remote.md#commands) describes, and then says `done.`; under "access to the phone's files" it says `ok: briefs go to Documents/xmd-briefs`. If Android showed no question, access had been given before: the script then says `already allowed`.
 
@@ -300,7 +300,7 @@ The phone shows a notification when the VPS has made a brief, or when a run fail
 
 For a brief with no VPS involved. Only the model call leaves the phone.
 
-**4.1 Settings.** In Termux, `nano ~/XtoMD/.env` and put your Venice key after `XMD_LLM_API_KEY=`. If the X backend's key is not in `sources.yaml`, uncomment its line and fill it in too.
+**4.1 Python and settings.** In Termux, `cd ~/XtoMD && bash deploy/termux/setup.sh alone`. On top of step 3.2, it installs Python, makes the virtual environment and adds the model's settings at the end of the phone's `.env`. Then `nano .env` and put your Venice key after `XMD_LLM_API_KEY=`. If the X backend's key is not in `sources.yaml`, uncomment its line and fill it in too.
 
 **4.2 Your configuration.** Bring `sources.yaml` and the `sources` folder from the laptop into the phone's `Documents` (USB, or any file transfer), then in Termux:
 

@@ -279,7 +279,7 @@ xmd/        the tool. cli.py: the `xmd` command.
   summary/    the model side: chunk, prompt, engine, runner; verify, topics, sections, brief.
 prompts/    brief.md (chunk prompt), section.md (section-summary prompt), detect.md and translate.md (languages)
 scripts/    the seven scripts above
-deploy/     running without the laptop: brief.sh (the entry point), env.example, vps/ (timer, SSH entry), termux/ (phone)
+deploy/     running without the laptop: brief.sh (the entry point), env.example, vps/ (timer, SSH entry), termux/ (phone: buttons, its own env.example)
 docs/       usage.md: this page. digest-summary.md: the brief's changelog, design and next optimization routes. remote.md and remote-setup.md: the VPS and the phone
 tests/      pytest, in the same folders as xmd/ (test_cli.py at the top)
 ```

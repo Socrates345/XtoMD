@@ -39,6 +39,7 @@ deploy/brief.sh: notify  --- HTTPS --->  ntfy.sh  ---------->  ntfy app: "brief 
 - **The phone** talks to the VPS over SSH with a key that may send exactly two requests: `run` (make a brief now) and `pull` (send me the recent briefs). Home-screen buttons send them.
 - **Delivery** stops at a folder on the phone, `Documents/xmd-briefs`. Moving a brief into the Obsidian vault is still done by hand.
 - **The phone alone** runs the left-hand column itself, in Termux: same `brief.sh`, same `make_brief.py`, no SSH.
+- **Each machine has its own clone and its own `.env`.** The phone's clone holds the scripts its buttons run, and its `.env` only says which VPS to ask and where briefs land. A brief asked for with a button is made on the VPS, with the VPS's `.env`: a setting changed on one machine changes nothing on the other.
 
 ### One run
 
@@ -92,10 +93,11 @@ Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 da
 | --- | --- |
 | `deploy/brief.sh` | The entry point described above (VPS and phone) |
 | `deploy/common.sh` | Shared by the scripts: where the repo, its Python and its digest folder are |
-| `deploy/env.example` | Template for `.env` |
+| `deploy/env.example` | Template for `.env` on a machine that makes briefs: the VPS, or the phone alone |
 | `deploy/vps/xmd-brief.service`, `xmd-brief.timer` | The daily run, as systemd units |
 | `deploy/vps/ssh-entry.sh` | The only thing the phone's SSH key can run on the VPS |
-| `deploy/termux/setup.sh` | One-time phone setup; creates the buttons |
+| `deploy/termux/setup.sh` | One-time phone setup; creates the buttons and the phone's `.env`. With `alone`, also what `phone.sh` needs (Python, the model's settings) |
+| `deploy/termux/env.example` | Template for the phone's `.env` |
 | `deploy/termux/vps.sh` | Phone side of `run` and `pull` |
 | `deploy/termux/phone.sh` | A brief made on the phone alone |
 | `.gitattributes` | Keeps `deploy/` in LF line endings, whatever platform commits it |
@@ -105,7 +107,7 @@ Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 da
 
 ## Settings (`.env`)
 
-`brief.sh` reads `.env` as a shell would: no spaces around `=`, and the JSON value in single quotes.
+`brief.sh` reads `.env` as a shell would: no spaces around `=`, and the JSON value in single quotes. The two phone-only settings are in `deploy/termux/env.example`, the others in `deploy/env.example`.
 
 | Variable | Used on | Meaning | When unset |
 | --- | --- | --- | --- |
@@ -271,7 +273,7 @@ systemctl daemon-reload
 
 - **Your settings are never touched.** `.env`, `sources.yaml`, `sources/`, `digests/` and `xmd.db` are git-ignored.
 - **`git pull` refuses because of "local changes":** a tracked file was edited on the VPS; `git status` names it. `git restore FILE` drops that edit, then pull again.
-- **The phone** updates the same way: `git pull` in `~/XtoMD` inside Termux, then `bash deploy/termux/setup.sh` again when the buttons changed.
+- **The phone** updates the same way: `git pull` in `~/XtoMD` inside Termux, then `bash deploy/termux/setup.sh` again when the buttons changed (`setup.sh alone` if you make briefs on the phone too: it also installs changed dependencies).
 - **A clone made from the `remote` branch** (before it was merged into `main`) keeps pulling that branch. Switch it once, as `xmd` on the VPS and in Termux on the phone: `git fetch origin && git switch main`.
 
 ## Limits
@@ -303,11 +305,11 @@ systemctl daemon-reload
 | `Permission denied (publickey)` from the phone | **First the command:** on the phone it is `ssh xmd-vps`, not `ssh xmd@VPS_ADDRESS`. Only the name `xmd-vps` makes SSH offer the phone's key (the `Host xmd-vps` lines of `~/.ssh/config`); given the address it offers none, even though the same command works from the laptop. **Refused with `ssh xmd-vps` too:** the server does not know the key the phone offers. Compare fingerprints: `ssh-keygen -lf ~/.ssh/authorized_keys` on the VPS as `xmd`, `ssh-keygen -lf ~/.ssh/id_xmd.pub` in Termux. **Not listed on the VPS:** the line was added as root (so to root's file), glued to the end of the laptop's line (the VPS then lists one key, with `command="bash ...` in the middle of its line), or changed while being copied; [step 3.3](remote-setup.md#33-the-key) has the repair for each. **Listed:** the phone offers another key or asks another user: `ssh -G xmd-vps \| grep -E "^(hostname\|user\|identityfile) "` must show the server's address, `xmd` and `id_xmd`. |
 | `config error: ...` as soon as `brief.sh` starts | `sources.yaml` on this machine: the message names the file or the setting. A path setting left empty (`storage:`, `digest_dir:`) means its default, `xmd.db` and `digests`. |
 | The timer's run fails with `Read-only file system` | `storage:` or `digest_dir:` in `sources.yaml` points outside the repo, the only place the unit may write. |
-| `no .../.venv/bin/python` | The virtual environment was not made on this machine: `python3 -m venv .venv && .venv/bin/pip install -e .` |
+| `no .../.venv/bin/python` | The virtual environment was not made on this machine: `python3 -m venv .venv && .venv/bin/pip install -e .`. On the phone: `bash deploy/termux/setup.sh alone`. |
 | A button does nothing | Settings > Apps > Termux > **Display over other apps**: allow. |
 | `[Process completed (signal 9)]` in Termux | Android killed the run: battery **Unrestricted** for Termux, and **Disable child process restrictions** in Developer options. |
-| `can't resolve timezone ...: no timezone database found` on the phone | `.venv/bin/pip install tzdata` (`setup.sh` does it). |
-| `pip` fails building PyYAML on the phone | `pkg install -y clang libyaml`, then `bash deploy/termux/setup.sh` again. |
+| `can't resolve timezone ...: no timezone database found` on the phone | `.venv/bin/pip install tzdata` (`setup.sh alone` does it). |
+| `pip` fails building PyYAML on the phone | `pkg install -y clang libyaml`, then `bash deploy/termux/setup.sh alone` again. |
 | **Louder than usual** is missing | The machine's database is new: it fills in over two weeks, or copy `xmd.db` once. |
 | `the notification could not be sent (XMD_NOTIFY_URL in .env)` | `curl` failed, and its own line just above says why: no network, `curl` not installed (`apt install curl`, as root), or a typo in the URL. The brief is not affected. |
 | No notification, and no such line | The app is not subscribed to the same topic: compare the name in the app with the end of `XMD_NOTIFY_URL`. If the names match, Android is stopping the app in the background: Settings > Apps > ntfy > Battery: **Unrestricted**. |

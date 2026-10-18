@@ -421,23 +421,33 @@ def test_the_phone_says_how_to_ask_when_asked_for_something_else(repo, tmp_path)
 FORMER_BUTTONS = ["brief-vps-24h", "brief-vps-10min", "brief-vps-latest", "brief-phone-24h", "brief-phone-10min"]
 
 
+def _setup(repo: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    """setup.sh in a stand-in Termux: access to the phone's files is given already, and `pkg` and `pip` install
+    nothing, only write what they were asked to pkg.log and pip.log."""
+    (repo.parent / "storage" / "shared").mkdir(parents=True, exist_ok=True)  # repo.parent: _run's $HOME
+    prefix = tmp_path / "usr"
+    for tool in (prefix / "bin" / "pkg", repo / ".venv" / "bin" / "pip"):
+        tool.parent.mkdir(parents=True, exist_ok=True)
+        tool.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{repo}/{tool.name}.log"\n', encoding="utf-8")
+        tool.chmod(0o755)
+    path = f"{prefix / 'bin'}{os.pathsep}{os.environ['PATH']}"
+    return _run(repo, "termux/setup.sh", *args, PREFIX=str(prefix), PATH=path)
+
+
+def _log(repo: Path, name: str) -> list[str]:
+    log = repo / f"{name}.log"
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
 def test_setup_leaves_four_buttons_that_ask_the_vps_and_clears_its_former_ones_and_no_other(repo, tmp_path):
-    home = repo.parent  # what _run gives the scripts as $HOME
-    (home / "storage" / "shared").mkdir(parents=True)  # access to the phone's files: given already
-    shortcuts = home / ".shortcuts"
+    shortcuts = repo.parent / ".shortcuts"
     shortcuts.mkdir()
     for name in [*FORMER_BUTTONS, "my-own-button"]:
         (shortcuts / name).write_text("echo mine\n", encoding="utf-8")
-    prefix = tmp_path / "usr"
-    for tool in (prefix / "bin" / "pkg", repo / ".venv" / "bin" / "pip"):  # nothing is installed for real
-        tool.parent.mkdir(parents=True, exist_ok=True)
-        tool.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-        tool.chmod(0o755)
     asked = 'printf "%s\\n" "$*" >> "$(dirname "$0")/../../asked.log"\n'  # vps.sh, saying only what it was asked
     (repo / "deploy" / "termux" / "vps.sh").write_text(asked, encoding="utf-8")
 
-    path = f"{prefix / 'bin'}{os.pathsep}{os.environ['PATH']}"
-    done = _run(repo, "termux/setup.sh", PREFIX=str(prefix), PATH=path)
+    done = _setup(repo, tmp_path)
 
     assert done.returncode == 0, done.stderr
     buttons = ["download-latest-daily-brief", "generate-last-24h-brief", "generate-last-24h-brief-10min-read",
@@ -446,3 +456,47 @@ def test_setup_leaves_four_buttons_that_ask_the_vps_and_clears_its_former_ones_a
     for button in buttons:
         subprocess.run(["bash", str(shortcuts / button)], check=True, timeout=60)
     assert _asked(repo) == ["pull", "run 24h", "run 24h 10", "run since"]
+
+
+def test_setup_installs_no_python_and_gives_the_phone_only_its_own_settings(repo, tmp_path):
+    done = _setup(repo, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert _log(repo, "pkg") == ["install -y openssh tar"]
+    assert _log(repo, "pip") == []
+    env = repo / ".env"
+    assert env.read_bytes() == (repo / "deploy" / "termux" / "env.example").read_bytes()
+    assert env.stat().st_mode & 0o777 == 0o600
+    assert b"XMD_LLM_" not in env.read_bytes()  # no key to fill in
+    assert b"setup.sh alone" in done.stdout  # but where to go for a brief made on the phone
+
+
+def test_setup_alone_adds_python_and_the_model_settings_once_and_brief_sh_can_read_them(repo, tmp_path):
+    assert _setup(repo, tmp_path, "alone").returncode == 0
+    done = _setup(repo, tmp_path, "alone")  # again, after a `git pull` say
+
+    assert done.returncode == 0, done.stderr
+    assert _log(repo, "pkg") == ["install -y openssh tar python util-linux"] * 2
+    assert _log(repo, "pip") == ["install --quiet -e . tzdata"] * 2
+    settings = (repo / ".env").read_text(encoding="utf-8")
+    assert settings.startswith((repo / "deploy" / "termux" / "env.example").read_text(encoding="utf-8"))
+    assert settings.count("\nXMD_LLM_BASE_URL=") == 1 and "XMD_VPS_HOST" in settings
+    assert "Copy to .env" not in settings  # the template's opening comment is not copied
+    assert _run(repo, "brief.sh", "24h").returncode == 0
+    assert "disable_thinking" in json.loads((repo / "extra-body.log").read_text(encoding="utf-8"))["venice_parameters"]
+
+
+@pytest.mark.parametrize("args", [[], ["alone"]])
+def test_setup_leaves_an_existing_dot_env_as_it_is(repo, tmp_path, args):
+    mine = "XMD_LLM_BASE_URL=https://example.org/v1\nXMD_VPS_HOST=my-vps\n"
+    (repo / ".env").write_text(mine, encoding="utf-8")
+
+    assert _setup(repo, tmp_path, *args).returncode == 0
+    assert (repo / ".env").read_text(encoding="utf-8") == mine
+
+
+def test_setup_refuses_an_argument_it_does_not_know_before_installing_anything(repo, tmp_path):
+    done = _setup(repo, tmp_path, "vps")
+
+    assert done.returncode == 2 and b"usage" in done.stderr
+    assert _log(repo, "pkg") == [] and not (repo / ".env").exists()
