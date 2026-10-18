@@ -37,7 +37,9 @@ from xmd.summary.chunk import (  # noqa: E402
     CHARS_PER_TOKEN, DEFAULT_COMPRESSION, DEFAULT_MAX_INPUT_TOKENS, estimate_tokens, make_chunks, parse_compression,
     parse_export, tier_shares,
 )
-from xmd.core.config import load_config, read_group_levels, read_language  # noqa: E402
+from xmd.core.config import load_config, read_ad_sources, read_group_levels, read_language, read_storage  # noqa: E402
+from xmd.core.models import FeedItem  # noqa: E402
+from xmd.summary.ads import find_ads  # noqa: E402
 from xmd.summary.brief import LINES_PER_MINUTE, SECONDS_PER_IMAGE, build_brief, digest_items, load_item_ids  # noqa: E402
 from xmd.summary.budget import (  # noqa: E402
     MAX_COMPRESSION, PRIORITY_SHARE, SUMMARY_SHARE, bare_cuts, choose_compression, parse_minutes, summary_lines,
@@ -163,6 +165,33 @@ def _fit_compression(minutes: float, export: Path, digests: Path, config_path: s
     return sizing.compression
 
 
+def _ad_posts(export: Path, digests: Path, config_path: str, accounts: frozenset[str]) -> dict[str, FeedItem] | None:
+    """{id: item} of the digest's posts from the `accounts` marked `ads:off`, all tiers; None, having said why,
+    when the digest's posts can't be read."""
+    ids = load_item_ids(export, digests / f"{export.stem}.md")
+    if ids is None:
+        print(f"ad check skipped: {export.with_suffix('.items.json')} is missing, and it lists the digest's posts")
+        return None
+    try:
+        storage = read_storage(config_path)
+    except ValueError as exc:
+        print(f"ad check skipped: config error: {exc}")
+        return None
+    if not storage.exists():
+        print(f"ad check skipped: no database at {storage}")
+        return None
+    items, _history = digest_items(ids, storage)
+    return {i.id: i for i in items if i.source in accounts}
+
+
+def _without(posts, repeated, mapping: dict, urls: set[str]):
+    """The export's posts and same-story groups without the posts at `urls`."""
+    kept = [p for p in posts if mapping[str(p.n)]["url"] not in urls]
+    left = {p.n for p in kept}
+    groups = [tuple(n for n in group if n in left) for group in repeated]
+    return kept, [g for g in groups if len(g) >= 2]
+
+
 def _sizing_lines(minutes: float, sizing, one_liners: bool, whole: dict, barest: dict) -> list[str]:
     """What --time decided, for the console: how long the brief is uncut, and how the time is shared. `whole` and
     `barest` are the stats of the brief without its summaries, uncut and at its barest."""
@@ -243,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     posts, repeated = parse_export(export.read_text(encoding="utf-8"), mapping)
     x_md = Path(args.sources_dir) / "x.md"
     levels = read_group_levels(x_md) if x_md.exists() else {}
+    accounts = read_ad_sources(x_md) if x_md.exists() else frozenset()
     if args.time:
         compression = _fit_compression(args.time, export, digests, args.config, mapping, posts, repeated, levels,
                                        args.max_input_tokens)
@@ -269,6 +299,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"languages: {', '.join(language.accepted)} kept as posted, the rest written in {language.translate_to}")
     print("group levels: " + (", ".join(f"{g}={lv}" for g, lv in sorted(levels.items())) if levels
                               else f"none set in {x_md} (every group is normal)"))
+    marked = _ad_posts(export, digests, args.config, accounts) if accounts else None
+    if marked is not None:
+        print(f"ad check: {len(marked)} post{'s' if len(marked) != 1 else ''} from the {len(accounts)} "
+              f"account{'s' if len(accounts) != 1 else ''} marked ads:off"
+              + (", for the model to read on a real run" if args.dry_run else ""))
     if args.dry_run or args.stats:
         print(f"\n{'chunk':<16} {'level':<7} {'posts':>5} {'est. in':>8} {'items':>7} {'target':>7} {'max out':>8}")
         needs = []
@@ -306,7 +341,23 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if args.stats:
             print(f"warm-up ok in {warm.seconds:.1f} s (not counted)\n")
-        schema = ((lambda chunk: bounded_schema(chunk.min_items, chunk.max_items, chunk.max_ids))
+        ads = None
+        if marked is not None:  # before the summaries: an ad is neither summarized nor shown
+            check = find_ads(engine, {key: f"@{item.author or item.source.lstrip('@')}: {item.display_body()}"
+                                      for key, item in marked.items()})
+            ads = {"accounts": sorted(accounts), "posts": len(marked), "checked": check.checked,
+                   "hidden": check.hidden, "failed": check.failed}
+            print(f"ads: {len(check.hidden)} of {len(marked)} posts hidden"
+                  + (f" ({len(marked) - check.checked} not judged)" if check.checked < len(marked) else ""))
+            for failure in check.failed:
+                print(f"  not judged: {failure}")
+            if check.hidden:
+                posts, repeated = _without(posts, repeated, mapping, {marked[key].url for key in check.hidden})
+                chunks = make_chunks(posts, repeated, tier_shares(args.compression), args.max_input_tokens,
+                                     levels=levels)
+                if wanted:
+                    chunks = [c for c in chunks if c.id in wanted]
+        schema =((lambda chunk: bounded_schema(chunk.min_items, chunk.max_items, chunk.max_ids))
                   if args.bound_items else BRIEF_SCHEMA)
         print(f"summarizing {len(chunks)} chunk{'s' if len(chunks) != 1 else ''}...")
         results = run_chunks(engine, chunks, system_for, schema, args.retries, args.temperature,
@@ -329,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         "ratios": tier_shares(args.compression),
         "levels": levels,
         "language": {"accepted": list(language.accepted), "translate_to": language.translate_to} if language else None,
+        "ads": ads,  # the ids of the posts found to be ads: assemble_brief.py hides them too
         "chunking": {"max_input_tokens": args.max_input_tokens, "chars_per_token": CHARS_PER_TOKEN,
                      "only": sorted(wanted) or None},
         "export": {"file": export.name, "sha256": _sha(export)},

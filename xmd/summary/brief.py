@@ -420,13 +420,18 @@ def build_brief(
     translated: Translated | None = None,
     cuts: Cuts | None = None,
     fetch_report: FetchReport | None = None,
+    ads: list[FeedItem] | None = None,
 ) -> Brief:
     """The brief for the window's `items`, from a run's chunk `records` (see load_run). `mapping` and `repeated`
     come from the frozen export the run read; `levels` are the group levels the run used.
     `topics` and `summaries` (section label -> ...) open the sections they belong to, when given. `translated`
     is asked about every text the brief shows word for word (see translate.py): what it translates is shown
-    translated, the original quoted under it. `cuts` says what to leave out to fit a reading time."""
+    translated, the original quoted under it. `cuts` says what to leave out to fit a reading time. `ads` are the
+    posts the run found to be ads (scripts/run_system.py), left out of `items` by the caller: the brief ends with a
+    link to each."""
     levels = levels or {}
+    ads = ads or []
+    ad_urls = {i.url for i in ads}
     topics, summaries = topics or {}, summaries or {}
     by_url = {i.url: i for i in items}
     tiers = {i.id: tier_of(i, priority_sources, recap_groups) for i in items}
@@ -444,7 +449,7 @@ def build_brief(
     # posts without a usable summary: their chunk failed or was never run
     covered = {n for r in records if r.get("ok") and r.get("reply") is not None for n in r["ids"]}
     loose = [by_url[m["url"]] for n, m in mapping.items() if int(n) not in covered and m["url"] in by_url]
-    absent = sum(1 for m in mapping.values() if m["url"] not in by_url)
+    absent = sum(1 for m in mapping.values() if m["url"] not in by_url and m["url"] not in ad_urls)
 
     # stories: one made only of recap-group posts (its image tweets included) belongs to that group's section
     recap_stories: dict[str, list] = defaultdict(list)
@@ -575,8 +580,9 @@ def build_brief(
         notes.append(f"{_count(repeats, 'summary item')} dropped: the model repeated an earlier item")
     if loose:
         notes.append(f"{_count(len(loose), 'post')} without a summary (chunk failed or not run)")
-    if notes:
-        lines += ["---", "", "*" + "; ".join(notes) + ".*", ""]
+    closing = (["*" + "; ".join(notes) + ".*"] if notes else []) + ([_ads_line(ads)] if ads else [])
+    if closing:
+        lines += ["---", ""] + [line for paragraph in closing for line in (paragraph, "")]
     # what the fetch could not do (accounts not found, sources that failed): the brief is all a reader away from
     # the machine sees of the run, so it ends with it and its first line says it is there
     lines += fetch_report_lines(fetch_report, now)
@@ -602,8 +608,20 @@ def build_brief(
         "trending_items": sum(1 for i in kept if i.trending),
         "section_summaries": len(summaries), "louder_topics": sum(len(v) for v in topics.values()),
         "posts_without_summary": len(loose), "posts_absent_from_the_database": absent,
-        "regular_posts": regular_posts, "regular_posts_cited": regular_cited,
+        "regular_posts": regular_posts, "regular_posts_cited": regular_cited, "hidden_ads": len(ads),
     })
+
+
+def _ads_line(ads: list[FeedItem]) -> str:
+    """The brief's closing line on the posts hidden as ads: a link to each, by account, oldest first, so a post the
+    model took for an ad by mistake is one click away."""
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    by_source: dict[str, list[FeedItem]] = defaultdict(list)
+    for item in sorted(ads, key=lambda i: i.published or oldest):
+        by_source[item.source].append(item)
+    accounts = [f"{_md(source)} ({' · '.join(f'[{k}]({i.url})' for k, i in enumerate(posts, 1))})"
+                for source, posts in by_source.items()]
+    return f"*Hidden as ads (`ads:off` in sources/x.md): {', '.join(accounts)}.*"
 
 
 def _fitted_note(cuts: Cuts, items: list[FeedItem], tiers: dict[str, str]) -> str:

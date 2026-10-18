@@ -116,6 +116,35 @@ def test_meta_roundtrip(tmp_path):
     store.close()
 
 
+def test_a_picture_fingerprint_is_kept_until_forget_reaches_it(tmp_path):
+    store = Store(tmp_path / "t.db")
+    assert store.image_digest("https://pbs.twimg.com/media/a.png") is None
+    store.save_image_digest("https://pbs.twimg.com/media/a.png", "d1")
+    store.save_image_digest("https://pbs.twimg.com/media/b.png", "d2")
+    assert store.image_digest("https://pbs.twimg.com/media/a.png") == "d1"
+    store.conn.execute("UPDATE image_digests SET fetched_at = '2026-08-01T00:00:00+00:00' WHERE digest = 'd1'")
+    store.conn.commit()
+    assert store.forget(datetime(2026, 9, 1, tzinfo=timezone.utc)) == 0  # no item went: the count is of items
+    assert store.image_digest("https://pbs.twimg.com/media/a.png") is None
+    assert store.image_digest("https://pbs.twimg.com/media/b.png") == "d2"
+    store.close()
+
+
+def test_a_database_made_before_the_fingerprints_gains_their_table(tmp_path):
+    import sqlite3
+
+    old = sqlite3.connect(tmp_path / "t.db")
+    old.execute("CREATE TABLE items (id TEXT PRIMARY KEY, source TEXT NOT NULL, source_type TEXT NOT NULL,"
+                " title TEXT NOT NULL, url TEXT NOT NULL, author TEXT, published TEXT, text TEXT, full_text TEXT,"
+                " images TEXT, grp TEXT, retweet_of_author TEXT, retweet_of_text TEXT, fetched_at TEXT NOT NULL)")
+    old.commit()
+    old.close()
+    store = Store(tmp_path / "t.db")
+    store.save_image_digest("https://pbs.twimg.com/media/a.png", "d1")
+    assert store.image_digest("https://pbs.twimg.com/media/a.png") == "d1"
+    store.close()
+
+
 def test_roundtrip_fields_including_retweet_info(tmp_path):
     store = Store(tmp_path / "t.db")
     when = datetime(2026, 7, 6, 12, 30, tzinfo=timezone.utc)

@@ -98,6 +98,8 @@ async def fetch_all(
     progress: Callable[[int, int], None] | None = None,
     x_max_age_hours_override: int | None = None,
     known: Callable[[set[str]], set[str]] | None = None,
+    earlier: Callable[[], list[FeedItem]] | None = None,
+    image_digest: Callable[[str], str | None] | None = None,
 ) -> FetchResult:
     """Fetch every source concurrently (bounded). A failing source logs a
     warning, contributes nothing and is named in the result's `failed` (a
@@ -109,7 +111,8 @@ async def fetch_all(
 
     `known` answers which of some tweet ids are already stored, so a thread
     whose first tweet came in an earlier fetch still loses its replies (see
-    filters.py); None = nothing is."""
+    filters.py); None = nothing is. `earlier` (the stored posts) and `image_digest` (a picture's fingerprint)
+    find the posts an account has already posted (see filters._repeats)."""
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
     total = len(config.sources)
     done = 0
@@ -170,4 +173,4 @@ async def fetch_all(
     items = [item for batch, _, _ in results for item in batch]
     failed = [(s, why) for s, (_, why, _) in zip(config.sources, results) if why]
     not_found = frozenset(s.name for s, (_, _, gone) in zip(config.sources, results) if gone)
-    return FetchResult(apply_filters(items, config, known), failed, not_found, heard.lines)
+    return FetchResult(apply_filters(items, config, known, earlier, image_digest), failed, not_found, heard.lines)

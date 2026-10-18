@@ -282,3 +282,122 @@ def test_dedup_falls_back_to_title_when_no_body_text():
     # collide on an empty-string key
     items = [_authored("post one", "acct"), _authored("post two", "acct")]
     assert len(apply_filters(items, _cfg())) == 2
+
+
+def _post(n: int, text: str, images=(), author: str = "ondo") -> FeedItem:
+    """`author`'s tweet `n`: `text` and the pictures `images`."""
+    return FeedItem(source=f"@{author}", source_type="x", title=text[:200], author=author, full_text=text,
+                    url=f"https://x.com/{author}/status/{n}", images=list(images))
+
+
+def _pictures(**digests):
+    """An image_digest that knows the pictures named (`a` is https://pbs.twimg.com/media/a.png) and counts its
+    calls; any other picture can't be had."""
+    calls = []
+
+    def digest(url: str):
+        calls.append(url)
+        return digests.get(url.rsplit("/", 1)[-1].split(".")[0])
+
+    return digest, calls
+
+
+def _url(name: str) -> str:
+    return f"https://pbs.twimg.com/media/{name}.png"
+
+
+def test_a_post_the_account_already_posted_in_an_earlier_fetch_is_a_repeat():
+    stored = [_post(1, "Daily reminder: not financial advice")]
+    items = [_post(2, "Daily reminder: not financial advice"), _post(3, "Something new")]
+    kept = apply_filters(items, _cfg(), earlier=lambda: stored)
+    assert [i.url for i in kept] == ["https://x.com/ondo/status/3"]
+
+
+def test_a_stored_tweet_fetched_again_is_not_its_own_repeat():
+    stored = [_post(1, "the same tweet")]
+    assert len(apply_filters([_post(1, "the same tweet")], _cfg(), earlier=lambda: stored)) == 1
+
+
+def test_another_account_posting_the_same_words_is_no_repeat():
+    stored = [_post(1, "ACME earnings beat", author="alice")]
+    assert len(apply_filters([_post(2, "ACME earnings beat", author="bob")], _cfg(), earlier=lambda: stored)) == 1
+
+
+def test_the_same_picture_posted_again_with_no_words_is_a_repeat():
+    """The disclaimer image an account posts every day: a new url each time, the same bytes."""
+    digest, _ = _pictures(old="d1", new="d1", other="d2")
+    stored = [_post(1, "https://x.com/ondo/status/1/photo/1", [_url("old")])]
+    items = [_post(2, "https://x.com/ondo/status/2/photo/1", [_url("new")]),
+             _post(3, "https://x.com/ondo/status/3/photo/1", [_url("other")])]
+    kept = apply_filters(items, _cfg(), earlier=lambda: stored, image_digest=digest)
+    assert [i.url for i in kept] == ["https://x.com/ondo/status/3"]
+
+
+def test_the_same_words_with_another_picture_are_another_post():
+    digest, _ = _pictures(monday="d1", tuesday="d2")
+    stored = [_post(1, "Chart of the day", [_url("monday")])]
+    items = [_post(2, "Chart of the day", [_url("tuesday")])]
+    assert len(apply_filters(items, _cfg(), earlier=lambda: stored, image_digest=digest)) == 1
+
+
+def test_a_picture_that_cant_be_had_keeps_its_post():
+    digest, _ = _pictures(old="d1")  # the new one's download fails
+    stored = [_post(1, "", [_url("old")])]
+    assert len(apply_filters([_post(2, "", [_url("new")])], _cfg(), earlier=lambda: stored, image_digest=digest)) == 1
+
+
+def test_without_picture_fingerprints_a_post_with_pictures_is_never_a_repeat():
+    stored = [_post(1, "Chart of the day", [_url("monday")])]
+    assert len(apply_filters([_post(2, "Chart of the day", [_url("tuesday")])], _cfg(), earlier=lambda: stored)) == 1
+
+
+def test_pictures_are_fetched_only_when_the_words_match():
+    digest, calls = _pictures(a="d1", b="d1")
+    stored = [_post(1, "yesterday's words", [_url("a")])]
+    apply_filters([_post(2, "today's words", [_url("b")])], _cfg(), earlier=lambda: stored, image_digest=digest)
+    assert calls == []
+
+
+def test_words_with_a_picture_and_words_alone_are_different_posts():
+    stored = [_post(1, "Big news", [_url("a")])]
+    assert len(apply_filters([_post(2, "Big news")], _cfg(), earlier=lambda: stored)) == 1
+
+
+def test_links_to_other_sites_tell_two_posts_apart_and_links_to_x_do_not():
+    stored = [_post(1, "New article 👇 https://blog.example/one https://x.com/ondo/status/1/photo/1"),
+              _post(2, "Read this https://t.co/aaa")]
+    items = [_post(3, "New article 👇 https://blog.example/two"),  # another article
+             _post(4, "New article 👇 https://blog.example/one https://x.com/ondo/status/4/photo/1"),  # the same
+             _post(5, "Read this https://t.co/bbb")]  # a short link may stand for another page
+    kept = apply_filters(items, _cfg(), earlier=lambda: stored)
+    assert [i.url for i in kept] == ["https://x.com/ondo/status/3", "https://x.com/ondo/status/5"]
+
+
+def test_a_repeat_is_counted_apart_from_a_duplicate_in_the_same_fetch(caplog):
+    stored = [_post(1, "Daily reminder")]
+    items = [_post(2, "Daily reminder"), _post(3, "once"), _post(4, "once")]
+    with caplog.at_level("INFO", logger="xmd"):
+        kept = apply_filters(items, _cfg(), earlier=lambda: stored)
+    assert [i.url for i in kept] == ["https://x.com/ondo/status/3"]
+    assert "filtered out 2 of 3 tweet(s): 1 duplicates, 1 repeats" in caplog.text
+
+
+def test_the_small_rendition_of_an_x_picture():
+    from xmd.ingest.images import small
+
+    assert small("https://pbs.twimg.com/media/a.png") == "https://pbs.twimg.com/media/a.png?name=small"
+    assert small("https://pbs.twimg.com/media/a?format=jpg&name=large") == "https://pbs.twimg.com/media/a?format=jpg&name=small"
+    assert small("https://img.example/a.jpg") == "https://img.example/a.jpg"
+
+
+def test_a_picture_that_cant_be_downloaded_has_no_fingerprint():
+    import httpx
+
+    from xmd.ingest.images import digest
+
+    def answer(request):
+        return httpx.Response(200, content=b"png bytes") if "good" in str(request.url) else httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(answer)) as client:
+        assert digest("https://pbs.twimg.com/media/good.png", client) == digest("https://img.example/good.png", client)
+        assert digest("https://pbs.twimg.com/media/gone.png", client) is None

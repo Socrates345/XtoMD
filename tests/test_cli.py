@@ -33,7 +33,7 @@ def test_fetch_to_store_forwards_progress_callback(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         seen["progress"] = progress
         return FetchResult([])
 
@@ -97,7 +97,7 @@ def test_render_progress_shows_no_eta_before_anything_finishes(capsys):
 def test_fetch_to_store_dedupes_and_records_last_run(tmp_path, monkeypatch):
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         return FetchResult([FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")])
 
     monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)
@@ -120,7 +120,7 @@ def test_fetch_to_store_lets_the_filters_ask_which_tweets_are_stored(tmp_path, m
 
     asked = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         asked["stored"] = known({"1", "2"})
         return FetchResult([])
 
@@ -137,7 +137,7 @@ def test_fetch_to_store_lets_the_filters_ask_which_tweets_are_stored(tmp_path, m
 def test_fetch_to_store_reports_failed_sources_and_still_stores_the_rest(tmp_path, monkeypatch, capsys):
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         return FetchResult(
             [FeedItem(source="@dave", source_type="x", title="t", url="https://x.com/k/1")],
             [(Source(name="@alice", type="twitterapi", handle="alice"), "could not resolve @alice to a user id")],
@@ -171,7 +171,7 @@ def test_fetch_to_store_widens_lookback_after_a_long_gap(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         seen["override"] = x_max_age_hours_override
         return FetchResult([])
 
@@ -192,7 +192,7 @@ def test_fetch_to_store_narrows_lookback_for_a_recent_gap(tmp_path, monkeypatch)
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         seen["override"] = x_max_age_hours_override
         return FetchResult([])
 
@@ -213,7 +213,7 @@ def test_fetch_to_store_no_override_on_first_run(tmp_path, monkeypatch):
 
     seen = {}
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         seen["override"] = x_max_age_hours_override
         return FetchResult([])
 
@@ -539,7 +539,7 @@ def test_sources_lists_each_handle_with_its_group_and_its_options(monkeypatch, c
 def test_a_fetch_whose_output_is_not_a_terminal_still_says_where_it_is(tmp_path, monkeypatch, capsys):
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         progress(1, 2)
         progress(2, 2)
         return FetchResult(items=[])
@@ -556,7 +556,7 @@ def test_a_fetch_whose_output_is_not_a_terminal_still_says_where_it_is(tmp_path,
 def _fetch_that_answers(monkeypatch, result: FetchResult) -> None:
     from xmd import cli as cli_module
 
-    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None):
+    async def fake_fetch_all(config, progress=None, x_max_age_hours_override=None, known=None, **_):
         return result
 
     monkeypatch.setattr(cli_module, "fetch_all", fake_fetch_all)

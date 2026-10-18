@@ -186,8 +186,41 @@ def test_a_field_that_is_no_variable_is_warned_about_not_silently_ignored(tmp_pa
         cfg = load_config(_setup(tmp_path, x_md="carol | name:Carol | priorty:high\ndave | name:David | priority:high\n"))
     carol = cfg.sources[0]
     assert (carol.name, carol.priority) == ("Carol", False)
-    assert "unknown option 'priorty:high' on @carol is ignored (use name:, priority:, reposts:, only:, hide:)" in caplog.text
+    assert ("unknown option 'priorty:high' on @carol is ignored (use name:, priority:, reposts:, only:, hide:, ads:)"
+            in caplog.text)
     assert "dave" not in caplog.text  # and a correct line says nothing
+
+
+def test_ads_off_on_a_group_holds_for_each_of_its_handles_unless_one_says_otherwise(tmp_path, caplog):
+    x_md = (
+        "alice | ads:off\n"
+        "## markets | ads:off\n"
+        "bob\n"
+        "carol | ads:on\n"
+        "dave | name:Dave Data\n"
+        "## news\n"
+        "erin\n"
+        "frank | ads:none\n"
+    )
+    with caplog.at_level("WARNING", logger="xmd"):
+        cfg = load_config(_setup(tmp_path, x_md=x_md))
+    ads = {s.handle: s.ads for s in cfg.sources}
+    assert ads == {"alice": False, "bob": False, "carol": True, "dave": False, "erin": True, "frank": True}
+    assert "unknown value 'none' for `ads:` on @frank is ignored (use on, off)" in caplog.text
+    from xmd.core.config import read_ad_sources, source_options
+
+    assert read_ad_sources(tmp_path / "sources" / "x.md") == {"@alice", "@bob", "Dave Data"}  # the names posts carry
+    assert source_options(cfg.sources[0]) == ["ads:off"]
+    assert source_options(cfg.sources[2]) == []
+
+
+def test_the_database_path_is_read_without_the_api_key_or_the_follow_list(tmp_path):
+    from xmd.core.config import read_storage
+
+    path = tmp_path / "sources.yaml"
+    path.write_text("storage: data/xmd.db\n", encoding="utf-8")
+    assert str(read_storage(path)).replace("\\", "/") == "data/xmd.db"
+    assert str(read_storage(tmp_path / "missing.yaml")) == "xmd.db"
 
 
 def test_a_value_a_variable_does_not_take_is_warned_about_and_changes_nothing(tmp_path, caplog):

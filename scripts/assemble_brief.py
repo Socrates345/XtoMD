@@ -150,6 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     items, history = digest_items(ids, config.storage, HISTORY_DAYS)
     if len(items) != len(ids):
         print(f"WARNING: {len(ids) - len(items)} of the digest's {len(ids)} items are no longer in the database")
+    hidden = set((manifest.get("ads") or {}).get("hidden") or ())  # what the run found to be ads: never shown
+    ads = [i for i in items if i.id in hidden]
+    items = [i for i in items if i.id not in hidden]
     # the brief is dated when it is written, not when its digest was made: a run re-assembled hours later must not
     # carry the digest's hour. Shown on the configured clock.
     now = datetime.now(timezone.utc).astimezone(config.tz)
@@ -188,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             full_name=full.name if full.exists() else "",  # the full digest is optional: no link to a file that isn't there
             topics=topics, summaries=summaries,
             model_line=f"Brief by {engine['model']}, {compression}, prompt {manifest['prompt']['sha256'][:8]}, run {run.name}",
-            translated=translated, cuts=cuts, fetch_report=fetch_report,
+            translated=translated, cuts=cuts, fetch_report=fetch_report, ads=ads,
         )
 
     minutes = args.time or manifest.get("time_budget")
@@ -233,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
     if s["regular_posts"]:
         print(f"regular posts cited by a summary: {s['regular_posts_cited']} of {s['regular_posts']}; "
               f"posts without any summary (failed or not run): {s['posts_without_summary']}")
+    if ads:
+        print(f"ads: {len(ads)} hidden, linked at the end of the brief")
     print(f"\nreading time: ~{shown_minutes(s['minutes_at_your_pace'])} min at your pace ({LINES_PER_MINUTE} lines a "
           f"minute, {SECONDS_PER_IMAGE} s per image); by words: ~{shown_minutes(s['minutes_normal'])} min at "
           f"{WPM_NORMAL} wpm, ~{shown_minutes(s['minutes_diagonal'])} min at {WPM_DIAGONAL} wpm")

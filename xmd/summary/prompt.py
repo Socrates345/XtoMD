@@ -19,6 +19,7 @@ DEFAULT_PROMPT = Path(__file__).resolve().parents[2] / "prompts" / "brief.md"
 SECTION_PROMPT = DEFAULT_PROMPT.with_name("section.md")
 DETECT_PROMPT = DEFAULT_PROMPT.with_name("detect.md")
 TRANSLATE_PROMPT = DEFAULT_PROMPT.with_name("translate.md")
+ADS_PROMPT = DEFAULT_PROMPT.with_name("ads.md")
 
 # Every object in a schema names all its keys as required and allows no others: a hosted server's strict mode
 # (Venice, OpenAI) refuses a schema that doesn't, and a local one loses nothing by it.
@@ -114,6 +115,10 @@ def load_section_prompt(path: Path | str = SECTION_PROMPT, language: Language | 
 
 
 def load_detect_prompt(path: Path | str = DETECT_PROMPT) -> str:
+    return _FRONTMATTER.sub("", Path(path).read_text(encoding="utf-8"), count=1).strip() + "\n"
+
+
+def load_ads_prompt(path: Path | str = ADS_PROMPT) -> str:
     return _FRONTMATTER.sub("", Path(path).read_text(encoding="utf-8"), count=1).strip() + "\n"
 
 

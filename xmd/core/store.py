@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS image_digests (
+    url        TEXT PRIMARY KEY,
+    digest     TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
 """
 
 _ITEM_COLUMNS = (
@@ -88,13 +93,27 @@ class Store:
         return cur.rowcount
 
     def forget(self, before: datetime) -> int:
-        """Delete every item fetched before `before` and return how many. The file is then rewritten (VACUUM): a
-        deleted row's text otherwise stays in the file's free pages."""
+        """Delete every item fetched before `before`, and the picture fingerprints taken before it, and return how
+        many items. The file is then rewritten (VACUUM): a deleted row's text otherwise stays in the file's free
+        pages."""
         cur = self.conn.execute("DELETE FROM items WHERE fetched_at < ?", (before.isoformat(),))
+        pictures = self.conn.execute("DELETE FROM image_digests WHERE fetched_at < ?", (before.isoformat(),))
         self.conn.commit()
-        if cur.rowcount:
+        if cur.rowcount or pictures.rowcount:
             self.conn.execute("VACUUM")
         return cur.rowcount
+
+    def image_digest(self, url: str) -> str | None:
+        """The fingerprint of the picture at `url` taken by an earlier fetch (see ingest/images.py), or None."""
+        row = self.conn.execute("SELECT digest FROM image_digests WHERE url = ?", (url,)).fetchone()
+        return row[0] if row else None
+
+    def save_image_digest(self, url: str, digest: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO image_digests (url, digest, fetched_at) VALUES (?, ?, ?)",
+            (url, digest, datetime.now(timezone.utc).isoformat()),
+        )
+        self.conn.commit()
 
     def recent(self, since: datetime) -> list[FeedItem]:
         """All items published (or, when undated, fetched) at/after `since`,

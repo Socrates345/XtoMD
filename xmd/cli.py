@@ -12,9 +12,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
+import httpx
+
 from . import __version__
 from .core.config import Config, Source, load_config, source_options
 from .digest.export import build_export
+from .ingest import images
 from .ingest.fetcher import FetchResult, fetch_all
 from .core.models import FeedItem, FetchReport
 from .digest.render import build_markdown, build_quick
@@ -129,7 +132,28 @@ async def _fetch_to_store(config: Config, progress: Callable[[int, int], None] |
         finally:
             store.close()
 
-    result = await fetch_all(config, progress=progress, x_max_age_hours_override=override, known=known)
+    def earlier() -> list[FeedItem]:  # what each account posted before, to find its repeats: see filters.py
+        store = Store(config.storage)
+        try:
+            return store.recent_by_fetch(datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS))
+        finally:
+            store.close()
+
+    with httpx.Client() as client:
+        def image_digest(url: str) -> str | None:  # a picture's fingerprint, taken once and kept in the store
+            store = Store(config.storage)
+            try:
+                found = store.image_digest(url)
+                if found is None:
+                    found = images.digest(url, client)
+                    if found is not None:
+                        store.save_image_digest(url, found)
+                return found
+            finally:
+                store.close()
+
+        result = await fetch_all(config, progress=progress, x_max_age_hours_override=override, known=known,
+                                 earlier=earlier, image_digest=image_digest)
     horizon = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)
     # a quiet account's newest tweet comes back on every fetch however old it is (the adapters' fallback_latest):
     # stored, it would be forgotten KEEP_DAYS later and stored again as new, so one from before the horizon never is

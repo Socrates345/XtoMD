@@ -73,6 +73,7 @@ class Source:
     reposts: bool = True  # `reposts:off`, its own or its group's: its plain retweets are dropped at fetch
     only: tuple[str, ...] = ()  # `only: a, b`: of its tweets, just those with one of these keywords are kept
     hide: tuple[str, ...] = ()  # `hide: a, b`: its tweets with one of these keywords are dropped
+    ads: bool = True  # `ads:off`, its own or its group's: the model reads its posts at brief time and hides the ads
 
 
 @dataclass
@@ -113,6 +114,7 @@ PRIORITY = "priority"  # a handle: `high` = its tweets sort first and are shown 
 REPOSTS = "reposts"  # a handle or a group: `off` = its plain retweets are dropped at fetch
 ONLY = "only"  # a handle or a group: keep only the tweets with one of these keywords
 HIDE = "hide"  # a handle or a group: drop the tweets with one of these keywords
+ADS = "ads"  # a handle or a group: `off` = the brief hides its ads, found by the model (xmd/summary/ads.py)
 LEVEL = "level"  # a group: how much of it the brief keeps
 RECAP = "recap"  # a group: `on` = only worth its overall picture
 # what a group header may say about its importance; "normal" (also written medium or regular) is the default
@@ -121,11 +123,12 @@ LEVEL_WORDS = {"high": "high", "low": "low", "normal": "normal", "medium": "norm
 _VALUES: dict[str, dict] = {
     PRIORITY: {"high": True, "normal": False},
     REPOSTS: {"on": True, "off": False},
+    ADS: {"on": True, "off": False},
     RECAP: {"on": True, "off": False},
     LEVEL: LEVEL_WORDS,
 }
-_HANDLE_VARIABLES = (NAME, PRIORITY, REPOSTS, ONLY, HIDE)
-_GROUP_VARIABLES = (LEVEL, RECAP, REPOSTS, ONLY, HIDE)
+_HANDLE_VARIABLES = (NAME, PRIORITY, REPOSTS, ONLY, HIDE, ADS)
+_GROUP_VARIABLES = (LEVEL, RECAP, REPOSTS, ONLY, HIDE, ADS)
 # how a list written before `variable:value` said the same things, with a bare word in a field: still read. These
 # are the old words, not the ones above: renaming a variable or a value leaves them alone
 _BARE_WORDS: dict[str, tuple] = {
@@ -207,7 +210,8 @@ def source_options(source: Source) -> list[str]:
     said = [f"{PRIORITY}:{word(PRIORITY, True)}"] if source.priority else []
     if not source.reposts:
         said.append(f"{REPOSTS}:{word(REPOSTS, False)}")
-    return said + [f"{variable}:{', '.join(words)}" for variable, words in ((ONLY, source.only), (HIDE, source.hide)) if words]
+    said += [f"{variable}:{', '.join(words)}" for variable, words in ((ONLY, source.only), (HIDE, source.hide)) if words]
+    return said + ([f"{ADS}:{word(ADS, False)}"] if not source.ads else [])
 
 
 def _read_md_list(path: Path) -> list[dict]:
@@ -225,8 +229,9 @@ def _read_md_list(path: Path) -> list[dict]:
       is accepted and means nothing.
     - `priority:high` on a handle marks a high-priority source: its items sort first within
       their section, ahead of non-priority sources. `reposts:off`, `only: a, b` and
-      `hide: a, b` are a source's filters (see Source, and ingest/filters.py). On a header they
-      are the group's: `reposts` holds for each of its handles that does not say otherwise, the
+      `hide: a, b` are a source's filters (see Source, and ingest/filters.py); `ads:off` is one
+      the brief applies, with the model (summary/ads.py). On a header they are the group's:
+      `reposts` and `ads` hold for each of its handles that does not say otherwise, the
       keywords are added to each handle's own.
     - a list written before `variable:value` still loads: a bare `priority`, `rp_off`, `recap`,
       `high` or `low` in a field (see _BARE_WORDS), and the first field that is no variable at
@@ -262,7 +267,7 @@ def _read_md_list(path: Path) -> list[dict]:
         said = _read_fields(parts[1:], _HANDLE_VARIABLES, f"@{handle}")
         entries.append({
             "handle": handle, "name": said.get(NAME, ""), "group": group, "priority": said.get(PRIORITY, False),
-            "reposts": said.get(REPOSTS, of_group.get(REPOSTS, True)),
+            "reposts": said.get(REPOSTS, of_group.get(REPOSTS, True)), "ads": said.get(ADS, of_group.get(ADS, True)),
             "only": of_group.get(ONLY, ()) + said.get(ONLY, ()), "hide": of_group.get(HIDE, ()) + said.get(HIDE, ()),
             "recap": of_group.get(RECAP, False), "level": of_group.get(LEVEL, "normal"),
         })
@@ -277,6 +282,16 @@ def read_group_levels(x_md: Path) -> dict[str, str]:
     """{group: "high" | "low"} from a sources/x.md, for the groups that state a level. Nothing else is
     taken out of the file, so the brief can read its groups without loading the whole config."""
     return _levels(_read_md_list(Path(x_md)))
+
+
+def _display_name(entry: dict) -> str:
+    return entry["name"] or f"@{entry['handle']}"
+
+
+def read_ad_sources(x_md: Path) -> frozenset[str]:
+    """The sources whose ads the brief hides (`ads:off`, their own or their group's), by the name their posts carry
+    (`name:`, else @handle), from a sources/x.md: the model step reads them without the whole config."""
+    return frozenset(_display_name(e) for e in _read_md_list(Path(x_md)) if not e["ads"])
 
 
 def _section(raw: dict, name: str, path: Path) -> dict:
@@ -358,6 +373,13 @@ def read_digest_dir(path: str | Path = "sources.yaml") -> Path:
     return _path_setting(_read_yaml(path) if path.exists() else {}, "digest_dir", DEFAULT_DIGEST_DIR, path)
 
 
+def read_storage(path: str | Path = "sources.yaml") -> Path:
+    """`storage:` from a sources.yaml, and nothing else: the model step reads the posts it checks for ads without
+    the api key or the follow list load_config insists on. A missing file means the default."""
+    path = Path(path)
+    return _path_setting(_read_yaml(path) if path.exists() else {}, "storage", "xmd.db", path)
+
+
 def load_config(path: str | Path = "sources.yaml") -> Config:
     path = Path(path)
     if not path.exists():
@@ -392,9 +414,10 @@ def load_config(path: str | Path = "sources.yaml") -> Config:
             continue
         seen.add(handle)
         sources.append(Source(
-            name=entry["name"] or f"@{handle}", type="twitterapi",
+            name=_display_name(entry), type="twitterapi",
             handle=handle, platform="x", group=entry["group"],
             priority=entry["priority"], reposts=entry["reposts"], only=entry["only"], hide=entry["hide"],
+            ads=entry["ads"],
         ))
     if not sources:
         raise ValueError(f"no sources found — add handles to {x_md}")
