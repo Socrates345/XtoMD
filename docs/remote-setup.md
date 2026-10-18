@@ -9,7 +9,7 @@ Do the parts in order. Each ends with a **Check**: don't go on until it passes. 
 | [0. Laptop](#0-on-the-laptop-first) | Laptop | The code pushed, ready to be cloned |
 | [1. Venice](#1-venice) | Browser | An API key for the hosted model |
 | [2. VPS](#2-the-vps) | The server | A brief every day, at the hour set in `OnCalendar=` |
-| [3. Phone](#3-the-phone) | Termux on the Pixel | Buttons to fetch a brief, or ask for one |
+| [3. Phone](#3-the-phone) | Termux on the Pixel | Buttons to fetch a brief, or ask for one; a notification when one is ready |
 | [4. Phone alone](#4-the-phone-alone-optional) | Termux on the Pixel | A brief with no VPS at all |
 
 Placeholders used below: `VPS_ADDRESS` (the server's IP or name), `REPO_URL` (this repository's clone URL), `YOUR_VENICE_KEY`.
@@ -72,7 +72,7 @@ On the VPS, as root:
 
 ```bash
 apt update && apt -y full-upgrade
-apt -y install git python3-venv tzdata ufw unattended-upgrades
+apt -y install git python3-venv tzdata ufw unattended-upgrades curl
 dpkg-reconfigure -plow unattended-upgrades        # answer Yes: security updates install themselves
 
 # SSH by key only (10-: read before any file the image shipped, and the first value read wins)
@@ -275,6 +275,27 @@ Briefs land in `Documents/xmd-briefs`. To send them elsewhere, set `XMD_BRIEF_DE
 
 **Check:** tap `download-latest-daily-brief`. A terminal opens, lists the brief, and the Files app shows it in `Documents/xmd-briefs`.
 
+### 3.5 Notifications
+
+The phone shows a notification when the VPS has made a brief, or when a run failed. What each one says is in [remote.md](remote.md#notifications).
+
+1. Install **ntfy** from F-Droid, like Termux, or from the Play Store. The F-Droid build does not go through Google's servers: to stay connected it keeps a permanent "subscribed" notification. Then Settings > Apps > ntfy > Battery: **Unrestricted**.
+2. Make the topic's name. On the VPS, as `xmd`:
+
+   ```bash
+   python3 -c 'import secrets; print("xmd-" + secrets.token_hex(16))'
+   ```
+
+   Anyone who knows the name can read the notifications and send you some: treat it as a password.
+3. In the app: **+**, paste the name as the topic, keep the server `ntfy.sh`, **Subscribe**.
+4. On the VPS, as `xmd`: `nano ~/XtoMD/.env`, and add this line with the name at its end:
+
+   ```bash
+   XMD_NOTIFY_URL=https://ntfy.sh/THE_NAME
+   ```
+
+**Check**, on the VPS: `curl -d "it works" https://ntfy.sh/THE_NAME`, and the phone shows `it works`. (`curl: command not found` on a VPS set up before this step existed: `apt -y install curl` as root.) From then on, each brief comes with **XtoMD: brief ready**. To see one now, `systemctl start xmd-brief.service` as root: that makes a real brief, in a few minutes.
+
 ## 4. The phone alone (optional)
 
 For a brief with no VPS involved. Only the model call leaves the phone.
@@ -317,7 +338,7 @@ The second line writes the script the job runs. It stays outside `~/.shortcuts`,
 
 ## Done: what a day looks like
 
-- At the hour set in `OnCalendar=` (`xmd-brief.timer`), the VPS makes the brief by itself.
+- At the hour set in `OnCalendar=` (`xmd-brief.timer`), the VPS makes the brief by itself, and the phone shows **XtoMD: brief ready** (or **the run failed**: then `generate-since-last-brief`).
 - When you want to read: tap `download-latest-daily-brief`, then open the file from `Documents/xmd-briefs` (or move it into the vault).
 - When you want one now, or shorter: `generate-last-24h-brief` or `generate-last-24h-brief-10min-read` (after a missed daily run, `generate-since-last-brief`). It takes several minutes. If the phone loses the connection meanwhile, the VPS finishes the brief anyway: tap `download-latest-daily-brief` a little later.
 - If the VPS is down: `bash deploy/termux/phone.sh 24h`, once part 4 is done.

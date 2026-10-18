@@ -21,12 +21,13 @@ import fcntl  # noqa: E402  (not on Windows)
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 DAY = 86400
 
-# .venv/bin/python: answers the one question common.sh asks of the config, and "makes a brief" otherwise
+# .venv/bin/python: answers the one question common.sh asks of the config, and "makes a brief" otherwise (unless
+# there is a no-brief file: a run that stopped before its brief, or had nothing new)
 PYTHON = """#!/usr/bin/env bash
 if [[ "$1" == -c ]]; then echo digests; exit 0; fi
 printf '%s\\n' "$*" >> calls.log
 printf '%s\\n' "${XMD_LLM_EXTRA_BODY:-}" > extra-body.log
-echo "the brief" > digests/2026-10-06-5pm-24h-brief.md
+[[ -f no-brief ]] || echo "the brief" > digests/2026-10-06-5pm-24h-brief.md
 exit "$(cat exit-code 2> /dev/null || echo 0)"
 """
 
@@ -138,6 +139,103 @@ def test_the_briefs_older_than_the_days_to_keep_are_deleted_and_nothing_is_witho
 
     assert _run(repo, "brief.sh", "24h", XMD_KEEP_DAYS="14").returncode == 0
     assert not old.exists() and all(p.exists() for p in kept)
+
+
+# --- brief.sh's notification, on the ntfy topic XMD_NOTIFY_URL names
+
+TOPIC = "https://ntfy.sh/xmd-0123456789abcdef"
+
+# `curl ...`: each call recorded in a folder of its own, its arguments and what came on its stdin, and nothing sent
+CURL = """#!/usr/bin/env bash
+call="$NOTIFIED/$(ls "$NOTIFIED" | wc -l)"
+mkdir "$call"
+printf '%s\\0' "$@" > "$call/args"
+cat > "$call/stdin"
+exit "$(cat "$NOTIFIED/../curl-exit-code" 2> /dev/null || echo 0)"
+"""
+
+
+def _notifying(repo: Path, tmp_path: Path, *args: str, topic: str | None = TOPIC) -> subprocess.CompletedProcess:
+    """brief.sh, `topic` in its environment, and a curl on its PATH that only records what it was asked to send."""
+    curl = tmp_path / "bin" / "curl"
+    if not curl.exists():
+        curl.parent.mkdir()
+        curl.write_text(CURL, encoding="utf-8")
+        curl.chmod(0o755)
+    (repo / "notified").mkdir(exist_ok=True)
+    env = {"PATH": f"{curl.parent}{os.pathsep}{os.environ['PATH']}", "NOTIFIED": str(repo / "notified")}
+    return _run(repo, "brief.sh", *args, **env, **({"XMD_NOTIFY_URL": topic} if topic else {}))
+
+
+def _notifications(repo: Path) -> list[dict[str, str]]:
+    """What curl was asked to send, call by call: its headers, its body, its whole command line and its stdin."""
+    calls = repo / "notified"
+    sent = []
+    for call in sorted(calls.iterdir(), key=lambda p: int(p.name)) if calls.exists() else []:
+        args = (call / "args").read_text(encoding="utf-8").split("\0")[:-1]
+        headers = dict(args[i + 1].split(": ", 1) for i, arg in enumerate(args) if arg == "-H")
+        sent.append({**headers, "body": args[args.index("--data-raw") + 1], "argv": " ".join(args),
+                     "stdin": (call / "stdin").read_text(encoding="utf-8")})
+    return sent
+
+
+def test_a_new_brief_is_announced_by_its_name_and_no_older_one_is(repo, tmp_path):
+    _aged(repo / "digests" / "2026-10-05-6pm-24h-brief.md", 1)
+
+    assert _notifying(repo, tmp_path, "24h").returncode == 0
+
+    [sent] = _notifications(repo)
+    assert sent["Title"] == "XtoMD: brief ready" and sent["Tags"] == "newspaper"
+    assert sent["body"] == "2026-10-06-5pm-24h-brief.md"
+
+
+def test_the_topic_comes_from_dot_env_and_reaches_curl_on_stdin_not_on_a_command_line(repo, tmp_path):
+    (repo / ".env").write_text(f"XMD_NOTIFY_URL={TOPIC}\n", encoding="utf-8")
+
+    assert _notifying(repo, tmp_path, "24h", topic=None).returncode == 0
+
+    [sent] = _notifications(repo)
+    assert sent["stdin"] == f'url = "{TOPIC}"\n'
+    assert "ntfy.sh" not in sent["argv"]
+
+
+def test_without_a_topic_nothing_is_sent(repo, tmp_path):
+    assert _notifying(repo, tmp_path, "24h", topic=None).returncode == 0
+    assert _notifications(repo) == []
+
+
+def test_a_brief_with_failed_chunks_is_announced_as_such_and_the_exit_code_still_says_so(repo, tmp_path):
+    (repo / "exit-code").write_text("1", encoding="utf-8")
+
+    assert _notifying(repo, tmp_path, "24h").returncode == 1
+
+    [sent] = _notifications(repo)
+    assert sent["Title"] == "XtoMD: brief ready, some posts not summarized"
+    assert sent["body"] == "2026-10-06-5pm-24h-brief.md"
+
+
+def test_a_run_that_ends_without_its_brief_says_it_failed_and_one_with_nothing_new_says_nothing(repo, tmp_path):
+    (repo / "no-brief").touch()
+    (repo / "exit-code").write_text("1", encoding="utf-8")  # the model server went away, say
+
+    assert _notifying(repo, tmp_path, "24h").returncode == 1
+    [failed] = _notifications(repo)
+    assert failed["Title"] == "XtoMD: no brief, the run failed" and failed["Tags"] == "warning"
+    assert failed["body"].startswith("exit 1: ")
+
+    (repo / "exit-code").write_text("0", encoding="utf-8")  # nothing new in the window
+    assert _notifying(repo, tmp_path, "24h").returncode == 0
+    assert len(_notifications(repo)) == 1  # the failure's, still alone
+
+
+def test_a_notification_that_cannot_be_sent_fails_nothing_else(repo, tmp_path):
+    (repo / "curl-exit-code").write_text("6", encoding="utf-8")  # curl's "could not resolve host"
+
+    done = _notifying(repo, tmp_path, "24h")
+
+    assert done.returncode == 0
+    assert b"the notification could not be sent" in done.stderr
+    assert len(_notifications(repo)) == 1
 
 
 # --- termux/phone.sh, the brief made on the phone alone

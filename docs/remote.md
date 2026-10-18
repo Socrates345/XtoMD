@@ -31,9 +31,11 @@ scripts/make_brief.py                                                |
    |- digest                                                   Obsidian vault
    |- summarize   -->  Venice (qwen3-5-9b)
    '- assemble    -->  digests/DATE-HOUR-24h-brief.md
+deploy/brief.sh: notify  --- HTTPS --->  ntfy.sh  ---------->  ntfy app: "brief ready"
 ```
 
 - **The timer** starts `deploy/brief.sh 24h` once a day. The brief is written on the VPS and waits there.
+- **A notification** tells the phone when a brief is ready, or that a run failed: see [Notifications](#notifications).
 - **The phone** talks to the VPS over SSH with a key that may send exactly two requests: `run` (make a brief now) and `pull` (send me the recent briefs). Home-screen buttons send them.
 - **Delivery** stops at a folder on the phone, `Documents/xmd-briefs`. Moving a brief into the Obsidian vault is still done by hand.
 - **The phone alone** runs the left-hand column itself, in Termux: same `brief.sh`, same `make_brief.py`, no SSH.
@@ -47,7 +49,8 @@ scripts/make_brief.py                                                |
 3. takes a lock, so the timer and a run asked for from the phone never overlap;
 4. runs `scripts/make_brief.py`, which checks the model answers **before** fetching, then fetches, digests, summarizes and assembles, exactly as on the laptop;
 5. on the phone, copies the new brief to `XMD_BRIEF_DEST`;
-6. if `XMD_KEEP_DAYS` is set, deletes old briefs and digests (old exports and runs were already deleted by the fetch).
+6. if `XMD_NOTIFY_URL` is set, sends the notification ([Notifications](#notifications));
+7. if `XMD_KEEP_DAYS` is set, deletes old briefs and digests (old exports and runs were already deleted by the fetch).
 
 | Exit code | Meaning |
 | --- | --- |
@@ -57,6 +60,23 @@ scripts/make_brief.py                                                |
 | 75 | Another brief was being made on this machine |
 
 **A brief asked for from the phone survives a lost connection.** A brief takes minutes, and in that time a phone changes network or goes to sleep. So `ssh-entry.sh` starts `brief.sh` in a session of its own, writing to a file, and only shows the phone that file as it grows. If the connection drops, the showing stops and the VPS finishes the brief anyway. The phone then says `the connection to the VPS failed or was lost` (exit 255) and downloads nothing: tap `download-latest-daily-brief` a few minutes later. While the run is connected, the phone also sends a keep-alive every 30 seconds, so a quiet stretch does not make a mobile network drop it.
+
+### Notifications
+
+With `XMD_NOTIFY_URL` set in the VPS's `.env`, `brief.sh` ends each run by sending one message to that [ntfy](https://ntfy.sh) topic. The ntfy app on the phone, subscribed to the same topic, shows it as a notification:
+
+| The run | Notification |
+| --- | --- |
+| Wrote a brief | **XtoMD: brief ready**, and the brief's file name |
+| Wrote a brief, but some chunks failed (exit 1) | **XtoMD: brief ready, some posts not summarized**, and the file name |
+| Ended without a brief (any other exit code but 0) | **XtoMD: no brief, the run failed**, and the exit code |
+| Had nothing new in the window, or found another brief being made (exit 75) | None |
+
+- **Every run notifies, whatever started it:** the timer, or a button on the phone. For a run whose connection was lost, the notification says when `download-latest-daily-brief` will find the brief.
+- **Only a file name or an exit code is sent**, never what a brief says: ntfy.sh reads the text it passes on (see [Privacy and security](#privacy-and-security)).
+- **A notification that cannot be sent fails nothing else.** `brief.sh` prints `the notification could not be sent` and the brief and the exit code are what they would have been.
+
+To set it up: [step 3.5](remote-setup.md#35-notifications).
 
 ### State
 
@@ -97,6 +117,7 @@ Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 da
 | `XMD_BRIEF_DEST` | Phone | Folder where briefs end up | `Documents/xmd-briefs` on the phone; no copy on the VPS |
 | `XMD_VPS_HOST` | Phone | The VPS, as named in `~/.ssh/config` | `xmd-vps` |
 | `XMD_KEEP_DAYS` | VPS, phone | After each run, delete briefs and digests older than this many days | Briefs and digests are kept |
+| `XMD_NOTIFY_URL` | VPS | The ntfy topic told when a brief is ready or a run failed: `https://ntfy.sh/` followed by the topic's name | No notification |
 
 Venice needs this extra body:
 
@@ -183,6 +204,7 @@ journalctl -u xmd-brief.service -f        # follow a run in progress
 | --- | --- | --- |
 | tweetapi.com / twitterapi.io | Your follow list (as today) | Their own logs |
 | Venice | The export: the posts of the accounts you follow, handles included, and the machine's IP | By its own account no prompt and no reply ("private" models: zero retention, by contract); metadata such as IP, time and token counts |
+| ntfy.sh | The topic's name, each notification's text (a brief's file name, or a failed run's exit code) and the VPS's IP | The notifications, for some hours, so that a phone that was offline still gets them |
 | The VPS host | Whatever is on the disk: `sources.yaml` (keys), `sources/x.md` (follow list), `xmd.db`, the briefs | Until you delete it |
 | The phone | The briefs; when it runs alone, also the keys and the follow list, in Termux's private storage | Until you delete it |
 
@@ -195,6 +217,7 @@ Venice's retention is a promise that cannot be checked from outside. Handles are
 - **The timer's unit is sandboxed:** it can write inside the repo only (`ProtectSystem=strict`), gets a private `/tmp` and cannot gain privileges.
 - **SSH is by key only** and is the only open port.
 - **`.env` is readable by its owner only** (`chmod 600`) and is git-ignored.
+- **The ntfy topic's name is its password.** Anyone who knows it can read the notifications and send some to your phone. It is a long random name, written only in `.env` and in the app. `curl` gets it on its input rather than its command line, so other users of the server do not see it in the process list. To change it, make a new one ([step 3.5](remote-setup.md#35-notifications)) and replace it in both places.
 - **`XMD_KEEP_DAYS`** keeps old briefs and digests off the rented disk. The database, the exports and the runs are pruned on every fetch, whatever this says (`KEEP_DAYS` in `xmd/core/store.py`, `EXPORT_KEEP_DAYS` in `xmd/cli.py`).
 
 Not covered: the VPS host can read its own disk, and agents you later run on the same server can read this app's files unless they run as another user.
@@ -253,7 +276,8 @@ systemctl daemon-reload
 
 ## Limits
 
-- **Only partly run for real.** On 2026-10-06 the smoke test reached Venice from a VPS: the key, the thinking switch and the closed schemas work (lines 1 and 2 `OK`). A whole brief on Venice, the systemd units and everything in Termux have not been run yet; the scripts were tested with stand-ins (`tests/deploy/`). Expect a small fix or two on first use.
+- **Only partly run for real.** On 2026-10-06 the smoke test reached Venice from a VPS: the key, the thinking switch and the closed schemas work (lines 1 and 2 `OK`). A whole brief on Venice, the systemd units and everything in Termux have not been run yet; the scripts were tested with stand-ins (`tests/deploy/`). The notifications (added 2026-10-18) were sent by the real `curl` to a local listener, not to ntfy.sh. Expect a small fix or two on first use.
+- **A run stopped by its time limit sends no notification.** systemd kills a run that goes past `TimeoutStartSec=` in `xmd-brief.service` before `brief.sh` can send anything. If the daily notification did not come, `journalctl -u xmd-brief.service -e` says why.
 - **Whether Venice enforces the item bounds is not known.** It accepts `minItems`/`maxItems` (no `HTTP 400`), but that same day the full-chunk test was cut off at 1,500 tokens, a cap tighter than a real chunk's. The test now gives 20 items the 2,300 tokens a real chunk gets and, when a reply is still cut off, says whether it held more items than allowed (bounds ignored) or longer ones. If the bounds are ignored, only the prompt limits a reply, and a chunk that overruns its budget is retried once, then listed under "Not summarized": `scripts/run_stats.py` counts those.
 - **A scheduled run on the phone is not dependable.** Android decides when background work runs. That is why the VPS is the routine.
 - **The model on the phone itself is not set up.** When a phone can hold Qwen 3.5 9B in memory, a local server (llama.cpp's `llama-server`) can replace Venice: point `XMD_LLM_BASE_URL` at it and remove `XMD_LLM_EXTRA_BODY`. On a Pixel it runs on the CPU, so expect about an hour per brief (an estimate).
@@ -285,3 +309,5 @@ systemctl daemon-reload
 | `can't resolve timezone ...: no timezone database found` on the phone | `.venv/bin/pip install tzdata` (`setup.sh` does it). |
 | `pip` fails building PyYAML on the phone | `pkg install -y clang libyaml`, then `bash deploy/termux/setup.sh` again. |
 | **Louder than usual** is missing | The machine's database is new: it fills in over two weeks, or copy `xmd.db` once. |
+| `the notification could not be sent (XMD_NOTIFY_URL in .env)` | `curl` failed, and its own line just above says why: no network, `curl` not installed (`apt install curl`, as root), or a typo in the URL. The brief is not affected. |
+| No notification, and no such line | The app is not subscribed to the same topic: compare the name in the app with the end of `XMD_NOTIFY_URL`. If the names match, Android is stopping the app in the background: Settings > Apps > ntfy > Battery: **Unrestricted**. |
