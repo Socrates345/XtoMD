@@ -129,9 +129,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{exc}")
         return 2
     if note:  # nothing on the server fits: stop now, not after the digest has used up its window
-        print(f"\nno model on the server fits {wanted!r}: {'download it in LM Studio, or ' if local else ''}"
-              "name another with --model. On offer:")
+        # the list first and the reason last: `journalctl -e` shows the end of a run, and a hosted list is long
+        print("\nthe server offers:")
         print("\n".join(f"  {m}" for m in models or []))
+        fix = ("download it in LM Studio, or name another with --model" if local
+               else f"name another with {MODEL_ENV_VAR} in .env, or --model")
+        print(f"no model on the server fits {wanted!r}, nothing was fetched: {fix}")
         return 2
     print(f"model {model}: checking that it answers ...")
     try:  # loads the model now, and a model that thinks fails here, before anything is fetched

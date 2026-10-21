@@ -61,7 +61,7 @@ A run stays in `digests\.runs\`, and its export in `digests\.export\`, for `EXPO
 
 ### Away from the laptop
 
-No laptop, no LM Studio: a small VPS makes the brief every day on a timer, and the phone (Termux on Android) asks it for another one or downloads what it made. The phone can also run the whole pipeline alone, as a fallback. Both summarize with a hosted model, Venice's `qwen3-5-9b`, so there the export leaves your machine. **[remote.md](remote.md)** explains how it works (who sees what, settings, commands, troubleshooting); **[remote-setup.md](remote-setup.md)** installs it step by step.
+No laptop, no LM Studio: a small VPS makes the brief every day on a timer, and the phone (Termux on Android) asks it for another one or downloads what it made. The phone can also run the whole pipeline alone, as a fallback. Both summarize with a hosted model on Venice, so there the export leaves your machine. **[remote.md](remote.md)** explains how it works (who sees what, settings, commands, troubleshooting); **[remote-setup.md](remote-setup.md)** installs it step by step.
 
 ```bash
 bash deploy/brief.sh 24h        # on the VPS or the phone: reads .env, then runs make_brief.py --24h

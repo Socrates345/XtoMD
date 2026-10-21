@@ -54,7 +54,7 @@ The `.pub` line is what you give the VPS provider.
 
 1. Sign in at venice.ai, open the API settings, create an API key and copy it somewhere safe. It is shown once. (Key permissions restricted to inference are sufficient and good, you needn't admin control, especially securitywise)
 2. Leave the key's **Epoch Consumption Limits** (DIEM and USD) empty, or set each to 0.25 or more. They cap what this key may spend per day (1 DIEM pays for $1 of use), separately from your balance; a limit of 0, or one already used up, makes every request fail with `HTTP 402`.
-3. Add a few dollars of credit. A brief costs about one cent.
+3. Add a few dollars of credit. A brief costs a few cents.
 
 **Check:** you have the key. It is tested in step 2.4.
 
@@ -150,7 +150,7 @@ set -a; . ./.env; set +a
 
 The first line loads the settings of `.env` into your shell, so that a script you start by hand can see them. It prints nothing, lasts until you log out, and is only needed for scripts run by hand: `deploy/brief.sh` reads `.env` itself. Each part is explained in [Loading `.env` by hand](remote.md#loading-env-by-hand).
 
-**Check:** the first line names `https://api.venice.ai/api/v1` and `qwen3-5-9b`, and lines 1, 2 and 3 all say `OK`. If line 1 says `FAIL  HTTP 401` or `HTTP 402`, it is the key or its spending limit: see [Troubleshooting](remote.md#troubleshooting). If line 2 or 3 says `FAIL`, stop here: see [Limits](remote.md#limits).
+**Check:** the first line names `https://api.venice.ai/api/v1` and the model id of your `.env`, and lines 1, 2 and 3 all say `OK`. If line 1 says `FAIL  HTTP 401` or `HTTP 402`, it is the key or its spending limit: see [Troubleshooting](remote.md#troubleshooting). If line 2 or 3 says `FAIL`, stop here: see [Limits](remote.md#limits).
 
 ### 2.5 A first brief
 
@@ -177,8 +177,8 @@ The timer makes a `24h` brief every day at the hour and on the clock written in 
 Now run it once the way the timer will, to prove it works inside its sandbox:
 
 ```bash
-systemctl start xmd-brief.service         # returns when the brief is done, a few minutes
-journalctl -u xmd-brief.service -e
+systemctl start --no-block xmd-brief.service   # starts it and returns at once
+journalctl -u xmd-brief.service -f             # follow it; Ctrl+C once it ends (stops following, not the run)
 ```
 
 **Check:** `systemctl list-timers xmd-brief.timer` shows the next run, and the journal ends with a `written to digests/...` line. (Made in the same hour as the one from step 2.5, this second brief is named `...-brief-2.md`: a brief never replaces another.)
@@ -294,7 +294,7 @@ The phone shows a notification when the VPS has made a brief, or when a run fail
    XMD_NOTIFY_URL=https://ntfy.sh/THE_NAME
    ```
 
-**Check**, on the VPS: `curl -d "it works" https://ntfy.sh/THE_NAME`, and the phone shows `it works`. (`curl: command not found` on a VPS set up before this step existed: `apt -y install curl` as root.) From then on, each brief comes with **XtoMD: brief ready**. To see one now, `systemctl start xmd-brief.service` as root: that makes a real brief, in a few minutes.
+**Check**, on the VPS: `curl -d "it works" https://ntfy.sh/THE_NAME`, and the phone shows `it works`. (`curl: command not found` on a VPS set up before this step existed: `apt -y install curl` as root.) From then on, each brief comes with **XtoMD: brief ready**. To see one now, `systemctl start --no-block xmd-brief.service` as root: that makes a real brief, in a few minutes.
 
 ## 4. The phone alone (optional)
 

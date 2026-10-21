@@ -11,7 +11,7 @@ Until now the brief existed only when the laptop made it, with a local model in 
 | **VPS** | A small rented server, always on | Every day on a timer, and whenever the phone asks | The routine |
 | **Phone alone** | Termux on the Android phone | When you run the command | A fallback: no server needed |
 
-Neither has a GPU, so both summarize with a hosted model: Venice's `qwen3-5-9b`, the same Qwen 3.5 9B the prompts were tuned on. That is the one thing that leaves your machines that did not before (see [Privacy and security](#privacy-and-security)).
+Neither has a GPU, so both summarize with a hosted Qwen 3.5 on Venice (`XMD_LLM_MODEL` in `deploy/env.example`). That is the one thing that leaves your machines that did not before (see [Privacy and security](#privacy-and-security)).
 
 The laptop is unchanged. Its commands, its LM Studio setup and its brief are what they were; the new settings only exist on a machine that has a `.env`.
 
@@ -29,7 +29,7 @@ deploy/brief.sh  <---  deploy/vps/ssh-entry.sh  <--- SSH ---  button: generate-l
 scripts/make_brief.py                                                |
    |- fetch       -->  tweetapi.com                                  v   (by hand)
    |- digest                                                   Obsidian vault
-   |- summarize   -->  Venice (qwen3-5-9b)
+   |- summarize   -->  Venice
    '- assemble    -->  digests/DATE-HOUR-24h-brief.md
 deploy/brief.sh: notify  --- HTTPS --->  ntfy.sh  ---------->  ntfy app: "brief ready"
 ```
@@ -112,7 +112,7 @@ Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 da
 | Variable | Used on | Meaning | When unset |
 | --- | --- | --- | --- |
 | `XMD_LLM_BASE_URL` | VPS, phone | The model server: `https://api.venice.ai/api/v1` | LM Studio on the same machine (the laptop's default) |
-| `XMD_LLM_MODEL` | VPS, phone | The model id: `qwen3-5-9b` | `qwen/qwen3.5-9b`, LM Studio's name for it |
+| `XMD_LLM_MODEL` | VPS, phone | The model id: Venice's is in `deploy/env.example` | `qwen/qwen3.5-9b`, LM Studio's name for it |
 | `XMD_LLM_API_KEY` | VPS, phone | Your Venice key | No key is sent |
 | `XMD_LLM_EXTRA_BODY` | VPS, phone | A JSON object added to every request, see below | Nothing is added |
 | `XMD_TWEETAPI_KEY` or `XMD_TWITTERAPI_KEY` | VPS, phone | The X backend's key, if `sources.yaml` does not hold it | The key in `sources.yaml` |
@@ -148,7 +148,7 @@ set -a; . ./.env; set +a
 
 - **Without it** the script falls back to its defaults and looks for LM Studio on `127.0.0.1`.
 - **It lasts for that login only.** After logging out and back in, run it again.
-- **It prints nothing when it works.** `echo $XMD_LLM_MODEL` should answer `qwen3-5-9b`. Do not echo `XMD_LLM_API_KEY`: the key would stay on screen.
+- **It prints nothing when it works.** `echo $XMD_LLM_MODEL` should answer the model id written in `.env`. Do not echo `XMD_LLM_API_KEY`: the key would stay on screen.
 
 ## Commands
 
@@ -192,10 +192,10 @@ bash deploy/termux/phone.sh 24h 10       # ... fitted to a 10-minute read
 **On the VPS, as root:**
 
 ```bash
-systemctl list-timers xmd-brief.timer     # when the next daily brief is due
-systemctl start xmd-brief.service         # make it now, as the timer would
-journalctl -u xmd-brief.service -e        # what the last run printed
-journalctl -u xmd-brief.service -f        # follow a run in progress
+systemctl list-timers xmd-brief.timer          # when the next daily brief is due
+systemctl start --no-block xmd-brief.service   # make it now, as the timer would; returns at once
+journalctl -u xmd-brief.service -e             # what the last run printed
+journalctl -u xmd-brief.service -f             # follow a run in progress (Ctrl+C stops following, not the run)
 ```
 
 ## Privacy and security
@@ -242,7 +242,7 @@ All of it is inert on the laptop, where none of the `XMD_LLM_*` variables is set
 - **Change the follow list:** edit `sources/x.md` on the machine that makes the briefs. The laptop's copy and the VPS's are separate files.
 - **Revoke the phone:** delete its line from `/home/xmd/.ssh/authorized_keys`.
 - **Move to another VPS:** set up the new one, then copy `sources.yaml`, `sources/`, `.env` and, if you want its history, `xmd.db`.
-- **Cost:** at Venice's listed price on 2026-10-06 ($0.10 per million tokens in, $0.15 out), a brief costs about one cent: the summaries of 14 runs averaged 56K tokens in and 11K out (27K to 104K in), and the section summaries and translations, which are not counted, add an estimated 25K in and 6K out. Each machine that makes briefs fetches for itself, so the VPS's daily run adds its own calls to your X backend's quota.
+- **Cost:** at Venice's listed price for the model in `deploy/env.example` on 2026-10-21 ($0.15 per million tokens in, $1.00 out), a brief costs about three cents: the summaries of 14 runs averaged 56K tokens in and 11K out (27K to 104K in), and the section summaries and translations, which are not counted, add an estimated 25K in and 6K out. Each machine that makes briefs fetches for itself, so the VPS's daily run adds its own calls to your X backend's quota.
 
 ### Updating the code
 
@@ -290,7 +290,7 @@ systemctl daemon-reload
 | You see | Cause and fix |
 | --- | --- |
 | `cannot reach the server, nothing was fetched` | The machine cannot reach Venice (network, or a typo in `XMD_LLM_BASE_URL`). A hosted server is not waited for: run it again. |
-| `the server did not answer (... ReadTimeout ...): asking again` | Venice left one call without an answer. The run asks once more by itself and carries on: nothing to do. If the second try gets none either, it stops with `warm-up failed, nothing was run` or `the model did not answer, nothing was fetched`: make the brief again (`systemctl start xmd-brief.service`, or `generate-last-24h-brief`). |
+| `the server did not answer (... ReadTimeout ...): asking again` | Venice left one call without an answer. The run asks once more by itself and carries on: nothing to do. If the second try gets none either, it stops with `warm-up failed, nothing was run` or `the model did not answer, nothing was fetched`: make the brief again (`systemctl start --no-block xmd-brief.service`, or `generate-last-24h-brief`). |
 | `the model did not answer ... spent its tokens thinking`, or empty replies | `XMD_LLM_EXTRA_BODY` is missing or lost its single quotes. |
 | `HTTP 401` | The Venice key is wrong: check `XMD_LLM_API_KEY` in `.env` (no spaces, no quotes, the whole key). |
 | `HTTP 402 ... Insufficient USD or Diem balance` | The account has no credit left: add some in Venice's API settings. |

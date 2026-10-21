@@ -1,6 +1,6 @@
 # The daily brief on the VPS (docs/remote.md; step by step in docs/remote-setup.md). Started by xmd-brief.timer,
 # or by hand:
-#   systemctl start xmd-brief.service      then      journalctl -u xmd-brief.service -e
+#   systemctl start --no-block xmd-brief.service      then      journalctl -u xmd-brief.service -f
 #
 # Install: copy this file and xmd-brief.timer to /etc/systemd/system/, then
 #   systemctl daemon-reload && systemctl enable --now xmd-brief.timer

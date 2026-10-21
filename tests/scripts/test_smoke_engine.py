@@ -16,7 +16,7 @@ def _serve(monkeypatch, chat: httpx.Response) -> list[dict]:
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={"data": [{"id": "qwen3-5-9b"}]})
+            return httpx.Response(200, json={"data": [{"id": "qwen3-5-35b-a3b"}]})
         sent.append(json.loads(request.content))
         return chat
 

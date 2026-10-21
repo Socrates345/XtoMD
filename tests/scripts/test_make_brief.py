@@ -244,6 +244,17 @@ def test_a_model_the_server_does_not_offer_stops_before_anything_is_fetched(monk
     out = capsys.readouterr().out
     assert world.calls == []
     assert "qwen/qwen3.5-9b" in out and "only/model" in out  # what was wanted, and what is on offer
+    assert "no model on the server fits 'qwen/qwen3.5-9b'" in out.splitlines()[-1]  # last: `journalctl -e` shows it
+
+
+def test_a_hosted_model_that_is_gone_says_which_setting_to_change(monkeypatch, tmp_path, capsys):
+    world = World(monkeypatch, tmp_path)
+    world.models = ["e2ee-glm-5-3-flash", "hy4-preview"]
+
+    assert make_brief.main(["--24h", "--base-url", VENICE, "--model", "qwen3-5-35b-a3b"]) == 2
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert world.calls == []
+    assert "'qwen3-5-35b-a3b'" in last and "XMD_LLM_MODEL in .env" in last and "LM Studio" not in last
 
 
 def test_a_model_that_does_not_answer_stops_before_anything_is_fetched(monkeypatch, tmp_path, capsys):

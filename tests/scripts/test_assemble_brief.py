@@ -45,9 +45,9 @@ def test_a_run_whose_export_is_gone_says_so_instead_of_a_traceback(tmp_path, cap
 def test_the_calls_made_here_go_to_the_runs_own_server_with_the_runs_own_extra_body():
     args = argparse.Namespace(model="", base_url="", api_key="")
     venice = {"venice_parameters": {"disable_thinking": True}}
-    run_engine = {"model": "qwen3-5-9b", "base_url": "https://api.venice.ai/api/v1", "extra_body": venice}
+    run_engine = {"model": "qwen3-5-35b-a3b", "base_url": "https://api.venice.ai/api/v1", "extra_body": venice}
     with assemble_brief._engine(args, run_engine) as engine:
-        assert (engine.model, engine.base_url, engine.extra_body) == ("qwen3-5-9b", run_engine["base_url"], venice)
+        assert (engine.model, engine.base_url, engine.extra_body) == ("qwen3-5-35b-a3b", run_engine["base_url"], venice)
     with assemble_brief._engine(args, {"model": "m", "base_url": "http://127.0.0.1:1234/v1"}) as engine:
         assert engine.extra_body == {}  # a run made before there was one
 
