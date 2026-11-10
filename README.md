@@ -98,12 +98,23 @@ dave
 
 Every option is in [docs/usage.md](docs/usage.md#config).
 
+## Read later
+
+Saved posts you won't get round to reading? Paste their links into `readlater\links.md` and run:
+
+```powershell
+python readlater\summarize.py
+```
+
+Each link is recognised as an X Article, a thread, a long post or a post, and summarized on its own into one `readlater\summaries\<date>-<time>-summary.md`: a headline, a TL;DR, then key points. It uses the brief's tweetapi.com key and a hosted model (Venice). The setup is in [readlater/README.md](readlater/README.md).
+
 ## Docs
 
 | | |
 | --- | --- |
 | [Usage](docs/usage.md) | Every command and flag, the settings, the brief part by part, reading time, troubleshooting |
 | [Without the laptop](docs/remote.md) | A daily brief from a small VPS, asked for from the phone ([setup](docs/remote-setup.md)) |
+| [Read later](readlater/README.md) | Saved X posts, Articles and threads summarized into one page |
 | [Design and changelog](docs/digest-summary.md) | How the brief is built, and why |
 
 ## License
