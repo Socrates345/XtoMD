@@ -1,0 +1,8 @@
+{
+  "name": "readlater-web",
+  "private": true,
+  "description": "Defuddle, the extractor of Obsidian Web Clipper: readlater/summarize.py runs it on web links (README.md, Setup)",
+  "dependencies": {
+    "defuddle": "0.19.6"
+  }
+}

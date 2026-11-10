@@ -100,13 +100,13 @@ Every option is in [docs/usage.md](docs/usage.md#config).
 
 ## Read later
 
-Saved posts you won't get round to reading? Paste their links into `readlater\links.md` and run:
+Saved posts and web pages you won't get round to reading? Paste their links into `readlater\links.md` and run:
 
 ```powershell
 python readlater\summarize.py
 ```
 
-Each link is recognised as an X Article, a thread, a long post or a post, and summarized on its own into one `readlater\summaries\<date>-<time>-summary.md`: a headline, a TL;DR, then key points. It uses the brief's tweetapi.com key and a hosted model (Venice). The setup is in [readlater/README.md](readlater/README.md).
+Each x.com link is recognised as an X Article, a thread, a long post or a post; any other link is a web page, read down to its main text with Defuddle, the extractor inside Obsidian Web Clipper. Each one is summarized on its own into one `readlater\summaries\<date>-<time>-summary.md`: a headline, a TL;DR, then key points. Before the model is called, the run says about what it will cost and what your Venice key can still spend, and waits for Enter. It uses the brief's tweetapi.com key, a hosted model (Venice) and, for web pages, Node.js. The setup is in [readlater/README.md](readlater/README.md).
 
 ## Docs
 
@@ -114,7 +114,7 @@ Each link is recognised as an X Article, a thread, a long post or a post, and su
 | --- | --- |
 | [Usage](docs/usage.md) | Every command and flag, the settings, the brief part by part, reading time, troubleshooting |
 | [Without the laptop](docs/remote.md) | A daily brief from a small VPS, asked for from the phone ([setup](docs/remote-setup.md)) |
-| [Read later](readlater/README.md) | Saved X posts, Articles and threads summarized into one page |
+| [Read later](readlater/README.md) | Saved X posts, Articles, threads and web pages summarized into one page |
 | [Design and changelog](docs/digest-summary.md) | How the brief is built, and why |
 
 ## License
