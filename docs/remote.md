@@ -25,10 +25,11 @@ xmd-brief.timer    daily, at its OnCalendar= hour
       v
 deploy/brief.sh  <---  deploy/vps/ssh-entry.sh  <--- SSH ---  button: generate-last-24h-brief
       |                        |
-      v                        +--- briefs (tar) --- SSH --->  Documents/xmd-briefs
-scripts/make_brief.py                                                |
-   |- fetch       -->  tweetapi.com                                  v   (by hand)
-   |- digest                                                   Obsidian vault
+      v                        +--- briefs (tar) --- SSH --->  Documents/xmd-briefs, or the vault's
+scripts/make_brief.py                                          _sync_playground/1_unverified
+   |- fetch       -->  tweetapi.com                                  |   button: verify-downloaded-briefs
+   |- digest                                                         v   (scan, then Enter)
+   |                                                           _sync_playground/2_verified (synced)
    |- summarize   -->  Venice
    '- assemble    -->  digests/DATE-HOUR-24h-brief.md
 deploy/brief.sh: notify  --- HTTPS --->  ntfy.sh  ---------->  ntfy app: "brief ready"
@@ -37,7 +38,7 @@ deploy/brief.sh: notify  --- HTTPS --->  ntfy.sh  ---------->  ntfy app: "brief 
 - **The timer** starts `deploy/brief.sh 24h` once a day. The brief is written on the VPS and waits there.
 - **A notification** tells the phone when a brief is ready, or that a run failed: see [Notifications](#notifications).
 - **The phone** talks to the VPS over SSH with a key that may send exactly two requests: `run` (make a brief now) and `pull` (send me the recent briefs). Home-screen buttons send them.
-- **Delivery** stops at a folder on the phone, `Documents/xmd-briefs`. Moving a brief into the Obsidian vault is still done by hand.
+- **Delivery** stops at a folder on the phone: `Documents/xmd-briefs`, or, set up as in [Into the vault](#into-the-vault), the vault's `_sync_playground/1_unverified`, from which a button moves clean briefs to the synced `2_verified`. A brief is downloaded once: `vps.sh` keeps the names in `~/.xmd-pulled`, so one moved on is not downloaded again.
 - **The phone alone** runs the left-hand column itself, in Termux: same `brief.sh`, same `make_brief.py`, no SSH.
 - **Each machine has its own clone and its own `.env`.** The phone's clone holds the scripts its buttons run, and its `.env` only says which VPS to ask and where briefs land. A brief asked for with a button is made on the VPS, with the VPS's `.env`: a setting changed on one machine changes nothing on the other.
 
@@ -99,6 +100,7 @@ Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 da
 | `deploy/termux/setup.sh` | One-time phone setup; creates the buttons and the phone's `.env`. With `alone`, also what `phone.sh` needs (Python, the model's settings) |
 | `deploy/termux/env.example` | Template for the phone's `.env` |
 | `deploy/termux/vps.sh` | Phone side of `run` and `pull` |
+| `deploy/termux/verify.sh` | The gate from the vault's `1_unverified` to `2_verified` (see [Into the vault](#into-the-vault)) |
 | `deploy/termux/phone.sh` | A brief made on the phone alone |
 | `.gitattributes` | Keeps `deploy/` in LF line endings, whatever platform commits it |
 | `tests/deploy/` | Tests of the scripts above (Linux only; skipped on Windows) |
@@ -116,7 +118,9 @@ Each machine has its own `xmd.db`, so its own since-run cursor and its own 14 da
 | `XMD_LLM_API_KEY` | VPS, phone | Your Venice key | No key is sent |
 | `XMD_LLM_EXTRA_BODY` | VPS, phone | A JSON object added to every request, see below | Nothing is added |
 | `XMD_TWEETAPI_KEY` or `XMD_TWITTERAPI_KEY` | VPS, phone | The X backend's key, if `sources.yaml` does not hold it | The key in `sources.yaml` |
-| `XMD_BRIEF_DEST` | Phone | Folder where briefs end up | `Documents/xmd-briefs` on the phone; no copy on the VPS |
+| `XMD_BRIEF_DEST` | Phone | Folder where briefs end up; for the vault, its `_sync_playground/1_unverified` | `Documents/xmd-briefs` on the phone; no copy on the VPS |
+| `XMD_BRIEF_VERIFIED` | Phone | Where `verify.sh` moves clean briefs: the vault's `_sync_playground/2_verified` | The verify button refuses to run |
+| `XMD_BRIEF_REJECTED` | Phone | Where `verify.sh` moves rejected files: the vault's `.trash` | The verify button refuses to run |
 | `XMD_VPS_HOST` | Phone | The VPS, as named in `~/.ssh/config` | `xmd-vps` |
 | `XMD_KEEP_DAYS` | VPS, phone | After each run, delete briefs and digests older than this many days | Briefs and digests are kept |
 | `XMD_NOTIFY_URL` | VPS | The ntfy topic told when a brief is ready or a run failed: `https://ntfy.sh/` followed by the topic's name | No notification |
@@ -188,6 +192,7 @@ bash deploy/termux/phone.sh 24h 30       # ... cut to 30% of the whole day
 | `generate-last-24h-brief` | `vps.sh run 24h` |
 | `generate-last-24h-brief-keep30` | `vps.sh run 24h 30` |
 | `generate-since-last-brief` | `vps.sh run since`: what is new since the last brief the VPS made |
+| `verify-downloaded-briefs` | `verify.sh`: scans the downloaded briefs, then on Enter moves them on (see [Into the vault](#into-the-vault)) |
 
 **On the VPS, as root:**
 
@@ -197,6 +202,18 @@ systemctl start --no-block xmd-brief.service   # make it now, as the timer would
 journalctl -u xmd-brief.service -e             # what the last run printed
 journalctl -u xmd-brief.service -f             # follow a run in progress (Ctrl+C stops following, not the run)
 ```
+
+## Into the vault
+
+The phone can download briefs straight into the Obsidian vault, through the same gate as the laptop's `promote.ps1` (the isolated-workspace repo, "Obsidian vault bind-mounting"): a brief lands in the vault's `_sync_playground/1_unverified`, and only a deliberate tap moves it to `_sync_playground/2_verified`.
+
+- **`1_unverified` stays on the phone.** Obsidian Sync must leave it out: on the phone, *Settings → Sync → Excluded folders* lists `_sync_playground/1_unverified`, as on the laptop. The laptop's `1_unverified` (the container's outbox) is another folder, and `promote.ps1` never sees the phone's briefs.
+- **`2_verified` is synced**, so a brief moved there reaches the laptop's vault. It is never created by the script: a missing one means a setting is wrong, or Sync has not brought the folder yet.
+- **Settings**, in the phone's `.env` (`deploy/termux/env.example` has them commented out): `XMD_BRIEF_DEST` the vault's `1_unverified`, `XMD_BRIEF_VERIFIED` its `2_verified`, `XMD_BRIEF_REJECTED` its `.trash`. The paths start with `$HOME/storage/shared/`, followed by the vault's folder as the Files app shows it.
+- **`verify-downloaded-briefs`** (`deploy/termux/verify.sh`) checks every file in `1_unverified` as `promote.ps1` does: a `.md` file of at most 5 MB, with none of `<%`, `dataviewjs`, `$=`, `<script`, `<iframe`, `<object`, `<embed`, `javascript:`, `obsidian://`, `file:///` (literal, any case). It prints the report (each failure with its line and pattern), then waits: **Enter** moves the clean files to `2_verified` and the rest to `.trash`, under the same relative path; Ctrl+C moves nothing. It never overwrites: a name already taken, or a file changed since the report, stays in `1_unverified` and is listed. A symbolic link anywhere in `1_unverified` stops it before the scan.
+- **A brief is downloaded once.** `vps.sh pull` keeps the names it has downloaded in `~/.xmd-pulled`, in Termux's own storage. To download one again, delete its line there.
+
+The gate holds only if the phone's Obsidian runs nothing from note content (no Dataview JS, no Templater triggers). Obsidian Sync syncs plugins only when told to, so the phone's may differ from the laptop's, which `audit-obsidian.ps1` checks: look at the phone's list too (isolated-workspace's `security.md` says what to look for).
 
 ## Privacy and security
 

@@ -43,15 +43,17 @@ else
         sleep 1
     done
 fi
-# the folder the briefs go to unless .env names another (phone.sh, vps.sh): making it proves the access is real
-briefs="$HOME/storage/shared/Documents/xmd-briefs"
+# the folder the briefs go to: .env's XMD_BRIEF_DEST when a .env names one (phone.sh, vps.sh), else Documents/xmd-briefs.
+# Making it proves the access is real.
+briefs="$(set +u; if [[ -f "$repo/.env" ]]; then set -a; . "$repo/.env"; set +a; fi
+          printf '%s' "${XMD_BRIEF_DEST:-$HOME/storage/shared/Documents/xmd-briefs}")"
 if ! mkdir -p "$briefs" 2> /dev/null || ! touch "$briefs/.write-test" 2> /dev/null; then
-    echo "Termux cannot write to the phone's files yet: allow it (Settings > Apps > Termux > Permissions)," >&2
-    echo "then run this script again" >&2
+    echo "Termux cannot write to $briefs yet: allow it (Settings > Apps > Termux > Permissions)," >&2
+    echo "or correct XMD_BRIEF_DEST in .env, then run this script again" >&2
     exit 1
 fi
 rm -f "$briefs/.write-test"
-echo "ok: briefs go to Documents/xmd-briefs"
+echo "ok: briefs go to ${briefs#"$HOME/storage/shared/"}"
 
 cd "$repo"
 if [[ "$alone" -eq 1 ]]; then
@@ -86,6 +88,7 @@ shortcut download-latest-daily-brief "$repo/deploy/termux/vps.sh" pull
 shortcut generate-last-24h-brief "$repo/deploy/termux/vps.sh" run 24h
 shortcut generate-last-24h-brief-keep30 "$repo/deploy/termux/vps.sh" run 24h 30
 shortcut generate-since-last-brief "$repo/deploy/termux/vps.sh" run since
+shortcut verify-downloaded-briefs "$repo/deploy/termux/verify.sh"
 
 echo "== settings"
 if [[ ! -f .env ]]; then

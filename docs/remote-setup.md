@@ -204,9 +204,9 @@ cd XtoMD
 bash deploy/termux/setup.sh
 ```
 
-`setup.sh` installs SSH, asks Android for access to your files (allow it), creates the four buttons and creates the phone's `.env`. It installs no Python and asks for no key: a button only sends a request, and the brief is made on the VPS with the VPS's `.env` (the phone's own is a separate file, see [remote.md](remote.md#how-it-works)). It is safe to run again.
+`setup.sh` installs SSH, asks Android for access to your files (allow it), creates the five buttons and creates the phone's `.env`. It installs no Python and asks for no key: a button only sends a request, and the brief is made on the VPS with the VPS's `.env` (the phone's own is a separate file, see [remote.md](remote.md#how-it-works)). It is safe to run again.
 
-**Check:** it lists four names, the buttons [remote.md](remote.md#commands) describes, and then says `done.`; under "access to the phone's files" it says `ok: briefs go to Documents/xmd-briefs`. If Android showed no question, access had been given before: the script then says `already allowed`.
+**Check:** it lists five names, the buttons [remote.md](remote.md#commands) describes, and then says `done.`; under "access to the phone's files" it says `ok: briefs go to Documents/xmd-briefs` (or to the folder `.env` names). If Android showed no question, access had been given before: the script then says `already allowed`.
 
 To check the install again at any time, run the script again (`cd ~/XtoMD && bash deploy/termux/setup.sh`): it changes nothing that is already in place and stops with a message at the first thing that is missing.
 
@@ -271,9 +271,24 @@ ssh xmd-vps ls                      # must be refused: "allowed: run 24h|since [
 
 Long-press the home screen > Widgets > **Termux:Widget**, and drop the list on the home screen. What each button runs is in [remote.md](remote.md#commands) (**The buttons**).
 
-Briefs land in `Documents/xmd-briefs`. To send them elsewhere, set `XMD_BRIEF_DEST` in `~/XtoMD/.env`, for instance to a folder inside your vault if the vault is in the phone's shared storage (nothing then checks the file on its way in).
+Briefs land in `Documents/xmd-briefs`. To send them elsewhere, set `XMD_BRIEF_DEST` in `~/XtoMD/.env`.
 
-**Check:** tap `download-latest-daily-brief`. A terminal opens, lists the brief, and the Files app shows it in `Documents/xmd-briefs`.
+**Check:** tap `download-latest-daily-brief`. A terminal opens, lists the brief (`new: ...`), and the Files app shows it in `Documents/xmd-briefs`.
+
+**Into the vault, through the gate** (optional; how it works: [remote.md](remote.md#into-the-vault)). For a vault in the phone's shared storage:
+
+1. In Obsidian on the phone: *Settings → Sync → Excluded folders* → add `_sync_playground/1_unverified`, as on the laptop. Check that `_sync_playground/2_verified` is there (Sync brings it from the laptop).
+2. `nano ~/XtoMD/.env` and set the three folders, `<VAULT>` being the vault's folder as the Files app shows it:
+
+   ```bash
+   XMD_BRIEF_DEST="$HOME/storage/shared/<VAULT>/_sync_playground/1_unverified"
+   XMD_BRIEF_VERIFIED="$HOME/storage/shared/<VAULT>/_sync_playground/2_verified"
+   XMD_BRIEF_REJECTED="$HOME/storage/shared/<VAULT>/.trash"
+   ```
+
+3. `bash deploy/termux/setup.sh` again: it says `ok: briefs go to <VAULT>/_sync_playground/1_unverified`.
+
+**Check:** tap `download-latest-daily-brief`, then `verify-downloaded-briefs`: it lists the brief under `-- Clean (1) --`; press Enter, and it says `Moved to 2_verified:   1`. A little later, the brief is in the laptop's vault, in `_sync_playground/2_verified`.
 
 ### 3.5 Notifications
 
@@ -339,7 +354,7 @@ The second line writes the script the job runs. It stays outside `~/.shortcuts`,
 ## Done: what a day looks like
 
 - At the hour set in `OnCalendar=` (`xmd-brief.timer`), the VPS makes the brief by itself, and the phone shows **XtoMD: brief ready** (or **the run failed**: then `generate-since-last-brief`).
-- When you want to read: tap `download-latest-daily-brief`, then open the file from `Documents/xmd-briefs` (or move it into the vault).
+- When you want to read: tap `download-latest-daily-brief`, then open the file from `Documents/xmd-briefs`; set up for the vault, tap `verify-downloaded-briefs`, press Enter, and read it in `_sync_playground/2_verified`.
 - When you want one now, or shorter: `generate-last-24h-brief` or `generate-last-24h-brief-keep30` (30% of the day) (after a missed daily run, `generate-since-last-brief`). It takes several minutes. If the phone loses the connection meanwhile, the VPS finishes the brief anyway: tap `download-latest-daily-brief` a little later.
 - If the VPS is down: `bash deploy/termux/phone.sh 24h`, once part 4 is done.
 - At home, the laptop works as before. Its briefs and the VPS's are independent.

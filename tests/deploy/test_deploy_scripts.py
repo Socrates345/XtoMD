@@ -413,6 +413,24 @@ def test_a_download_leaves_a_brief_already_on_the_phone_as_it_is(repo, tmp_path)
     assert (dest / "2026-10-06-5pm-24h-brief.md").read_text(encoding="utf-8") == "read, with my notes"
 
 
+def test_a_brief_moved_on_from_the_download_folder_is_not_downloaded_again(repo, tmp_path):
+    _aged(repo / "digests" / "2026-10-06-5pm-24h-brief.md", 0.1)
+    dest = tmp_path / "vault" / "_sync_playground" / "1_unverified"
+
+    first = _phone(repo, tmp_path, "pull", XMD_BRIEF_DEST=str(dest))
+    assert first.returncode == 0 and b"new: 2026-10-06-5pm-24h-brief.md" in first.stdout
+    (dest / "2026-10-06-5pm-24h-brief.md").rename(tmp_path / "verified.md")  # verify.sh moved it on
+    _aged(repo / "digests" / "2026-10-06-9pm-since-brief.md", 0.1)
+
+    second = _phone(repo, tmp_path, "pull", XMD_BRIEF_DEST=str(dest))
+
+    assert second.returncode == 0 and b"already downloaded: 2026-10-06-5pm-24h-brief.md" in second.stdout
+    assert [p.name for p in dest.iterdir()] == ["2026-10-06-9pm-since-brief.md"]  # only what is new
+    record = repo.parent / ".xmd-pulled"  # in Termux's home, outside the vault
+    assert record.read_text(encoding="utf-8").split() == ["2026-10-06-5pm-24h-brief.md", "2026-10-06-9pm-since-brief.md"]
+    assert not list(repo.parent.glob(".xmd-pull.*"))  # the staging folder is gone
+
+
 def test_the_phone_says_how_to_ask_when_asked_for_something_else(repo, tmp_path):
     done = _phone(repo, tmp_path, "status")
     assert done.returncode == 2 and b"usage" in done.stderr
@@ -444,23 +462,34 @@ def _log(repo: Path, name: str) -> list[str]:
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
-def test_setup_leaves_four_buttons_that_ask_the_vps_and_clears_its_former_ones_and_no_other(repo, tmp_path):
+def test_setup_leaves_five_buttons_and_clears_its_former_ones_and_no_other(repo, tmp_path):
     shortcuts = repo.parent / ".shortcuts"
     shortcuts.mkdir()
     for name in [*FORMER_BUTTONS, "my-own-button"]:
         (shortcuts / name).write_text("echo mine\n", encoding="utf-8")
     asked = 'printf "%s\\n" "$*" >> "$(dirname "$0")/../../asked.log"\n'  # vps.sh, saying only what it was asked
     (repo / "deploy" / "termux" / "vps.sh").write_text(asked, encoding="utf-8")
+    (repo / "deploy" / "termux" / "verify.sh").write_text(asked.replace('"$*"', "verify"), encoding="utf-8")
 
     done = _setup(repo, tmp_path)
 
     assert done.returncode == 0, done.stderr
     buttons = ["download-latest-daily-brief", "generate-last-24h-brief", "generate-last-24h-brief-keep30",
-               "generate-since-last-brief"]
-    assert sorted(p.name for p in shortcuts.iterdir()) == [*buttons, "my-own-button"]
+               "generate-since-last-brief", "verify-downloaded-briefs"]
+    assert sorted(p.name for p in shortcuts.iterdir()) == sorted([*buttons, "my-own-button"])
     for button in buttons:
         subprocess.run(["bash", str(shortcuts / button)], check=True, timeout=60)
-    assert _asked(repo) == ["pull", "run 24h", "run 24h 30", "run since"]
+    assert _asked(repo) == ["pull", "run 24h", "run 24h 30", "run since", "verify"]
+
+
+def test_setup_checks_it_can_write_where_dot_env_sends_the_briefs(repo, tmp_path):
+    vault = repo.parent / "storage" / "shared" / "Obsidian" / "Vault" / "_sync_playground" / "1_unverified"
+    (repo / ".env").write_text(f'XMD_BRIEF_DEST="{vault}"\n', encoding="utf-8")
+
+    done = _setup(repo, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert b"ok: briefs go to Obsidian/Vault/_sync_playground/1_unverified" in done.stdout and vault.is_dir()
 
 
 def test_setup_installs_no_python_and_gives_the_phone_only_its_own_settings(repo, tmp_path):
@@ -505,3 +534,141 @@ def test_setup_refuses_an_argument_it_does_not_know_before_installing_anything(r
 
     assert done.returncode == 2 and b"usage" in done.stderr
     assert _log(repo, "pkg") == [] and not (repo / ".env").exists()
+
+
+# --- termux/verify.sh, the gate between the vault's 1_unverified and 2_verified
+
+@pytest.fixture
+def vault(tmp_path):
+    root = tmp_path / "vault"
+    for folder in ("_sync_playground/1_unverified", "_sync_playground/2_verified"):
+        (root / folder).mkdir(parents=True)
+    return root
+
+
+def _verify(repo: Path, vault: Path, answer: bytes = b"\n", **env: str) -> subprocess.CompletedProcess:
+    settings = {"XMD_BRIEF_DEST": str(vault / "_sync_playground" / "1_unverified"),
+                "XMD_BRIEF_VERIFIED": str(vault / "_sync_playground" / "2_verified"),
+                "XMD_BRIEF_REJECTED": str(vault / ".trash"), **env}
+    clean = {"PATH": os.environ["PATH"], "HOME": str(repo.parent), **settings}
+    shutil.copy(DEPLOY / "termux" / "verify.sh", repo / "deploy" / "termux" / "verify.sh")
+    return subprocess.run(["bash", str(repo / "deploy" / "termux" / "verify.sh")], env=clean, input=answer,
+                          capture_output=True, timeout=60)
+
+
+def _put(vault: Path, rel: str, text: str) -> Path:
+    path = vault / "_sync_playground" / "1_unverified" / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _tree(root: Path) -> list[str]:
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()) if root.exists() else []
+
+
+def test_on_enter_clean_briefs_go_to_verified_and_the_rest_to_quarantine_under_the_same_path(repo, vault):
+    _put(vault, "2026-10-06-5pm-24h-brief.md", "# X brief\n\n- a summary, $TSLA up 3%\n")
+    _put(vault, "old/2026-10-05-brief.md", "# X brief\n")
+    _put(vault, "2026-10-06-9pm-since-brief.md", "# X brief\n\nfine\n<SCRIPT>alert(1)</script>\n")
+    _put(vault, "notes.txt", "plain text")
+
+    done = _verify(repo, vault)
+
+    assert done.returncode == 0, done.stdout
+    out = done.stdout.decode()
+    assert "OK   2026-10-06-5pm-24h-brief.md" in out and "OK   old/2026-10-05-brief.md" in out
+    assert "FAIL 2026-10-06-9pm-since-brief.md - 1 forbidden-pattern match(es)" in out
+    assert "line 4: pattern '<script' -> <SCRIPT>alert(1)</script>" in out  # case-insensitive, and where
+    assert "FAIL notes.txt - not a .md file" in out
+    assert _tree(vault / "_sync_playground" / "2_verified") == ["2026-10-06-5pm-24h-brief.md", "old/2026-10-05-brief.md"]
+    assert _tree(vault / ".trash") == ["2026-10-06-9pm-since-brief.md", "notes.txt"]
+    assert _tree(vault / "_sync_playground" / "1_unverified") == []
+    assert "Moved to 2_verified:   2" in out and "Moved to quarantine:   2" in out
+
+
+@pytest.mark.parametrize("pattern", ["<%", "dataviewjs", "$=", "<script", "<iframe", "<object", "<embed",
+                                     "javascript:", "obsidian://", "file:///", "DataViewJS", "JavaScript:"])
+def test_every_pattern_promote_ps1_refuses_is_refused(repo, vault, pattern):
+    _put(vault, "brief.md", f"# X brief\n\n- a tweet with {pattern} in it\n")
+
+    assert _verify(repo, vault).returncode == 0
+    assert _tree(vault / ".trash") == ["brief.md"] and _tree(vault / "_sync_playground" / "2_verified") == []
+
+
+def test_a_file_over_5_mb_is_refused_without_being_read(repo, vault):
+    _put(vault, "big.md", "a" * (5 * 1024 * 1024 + 1))
+    _put(vault, "just.md", "a" * (5 * 1024 * 1024))
+
+    done = _verify(repo, vault)
+
+    assert b"FAIL big.md - size 5242881 bytes exceeds the 5 MB limit" in done.stdout
+    assert _tree(vault / ".trash") == ["big.md"] and _tree(vault / "_sync_playground" / "2_verified") == ["just.md"]
+
+
+def test_without_enter_nothing_moves(repo, vault):
+    _put(vault, "brief.md", "# X brief\n")
+
+    done = _verify(repo, vault, answer=b"")  # end of input: as Ctrl+C, no Enter
+
+    assert done.returncode == 0 and b"OK   brief.md" in done.stdout and b"nothing moved" in done.stdout
+    assert _tree(vault / "_sync_playground" / "1_unverified") == ["brief.md"]
+
+
+def test_a_name_already_in_verified_is_never_overwritten_and_stays_behind(repo, vault):
+    _put(vault, "brief.md", "# X brief, new\n")
+    (vault / "_sync_playground" / "2_verified" / "brief.md").write_text("read, with my notes", encoding="utf-8")
+
+    done = _verify(repo, vault)
+
+    assert done.returncode == 0 and b"brief.md  [name already exists at destination]" in done.stdout
+    assert (vault / "_sync_playground" / "2_verified" / "brief.md").read_text(encoding="utf-8") == "read, with my notes"
+    assert _tree(vault / "_sync_playground" / "1_unverified") == ["brief.md"]
+
+
+def test_a_symbolic_link_stops_everything_before_any_scan(repo, vault, tmp_path):
+    _put(vault, "brief.md", "# X brief\n")
+    (tmp_path / "secret.md").write_text("elsewhere", encoding="utf-8")
+    (vault / "_sync_playground" / "1_unverified" / "link.md").symlink_to(tmp_path / "secret.md")
+
+    done = _verify(repo, vault)
+
+    assert done.returncode == 1 and b"ABORT" in done.stdout and b"Scan report" not in done.stdout
+    assert _tree(vault / "_sync_playground" / "2_verified") == [] and not (vault / ".trash").exists()
+
+
+def test_a_missing_verified_folder_or_setting_stops_it_and_creates_nothing(repo, vault):
+    _put(vault, "brief.md", "# X brief\n")
+    (vault / "_sync_playground" / "2_verified").rmdir()
+
+    done = _verify(repo, vault)
+    assert done.returncode == 1 and b"2_verified does not exist" in done.stdout
+    assert not (vault / "_sync_playground" / "2_verified").exists()
+
+    done = _verify(repo, vault, XMD_BRIEF_REJECTED="")
+    assert done.returncode == 1 and b"XMD_BRIEF_REJECTED is not set" in done.stdout
+    assert _tree(vault / "_sync_playground" / "1_unverified") == ["brief.md"]
+
+
+def test_an_empty_folder_has_nothing_to_verify(repo, vault):
+    done = _verify(repo, vault)
+    assert done.returncode == 0 and b"nothing to verify" in done.stdout
+
+
+def test_a_brief_changed_between_the_report_and_enter_stays_behind(repo, vault):
+    _put(vault, "a.md", "# X brief\n")
+    changed = _put(vault, "b.md", "# X brief\n")
+    shutil.copy(DEPLOY / "termux" / "verify.sh", repo / "deploy" / "termux" / "verify.sh")
+    env = {"PATH": os.environ["PATH"], "HOME": str(repo.parent),
+           "XMD_BRIEF_DEST": str(vault / "_sync_playground" / "1_unverified"),
+           "XMD_BRIEF_VERIFIED": str(vault / "_sync_playground" / "2_verified"), "XMD_BRIEF_REJECTED": str(vault / ".trash")}
+    run = subprocess.Popen(["bash", str(repo / "deploy" / "termux" / "verify.sh")], env=env,
+                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    while not run.stdout.readline().startswith(b"-- Rejected"):  # the report is out: it waits for Enter now
+        pass
+    changed.write_text("# X brief\n<script>\n", encoding="utf-8")
+    rest, _ = run.communicate(b"\n", timeout=60)
+
+    assert run.returncode == 0 and b"b.md  [changed or gone since the report]" in rest
+    assert _tree(vault / "_sync_playground" / "2_verified") == ["a.md"]
+    assert _tree(vault / "_sync_playground" / "1_unverified") == ["b.md"]
