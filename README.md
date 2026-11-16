@@ -27,7 +27,7 @@ flowchart LR
 
 ```markdown
 # X brief — 2026-10-15
-**~25 min read**
+**~900 lines · 231 pictures**
 
 ## ★ Priority
 #### Frank Wire · 07:12 UTC
@@ -48,7 +48,7 @@ ACME confirms the Globex deal will close in Q1.
 - **Every bullet links its sources.** A summary cites the tweets it was written from. A citation the model invented is dropped.
 - **Repetition is the signal.** A story several of your accounts post goes to Trending, and names far louder than usual are flagged.
 - **Pictures are never summarized.** The model can't see an image, so you get the tweet itself.
-- **Fits the time you have.** `--time 10` fits the brief to ten minutes.
+- **As short as you want.** `--keep 30` keeps 30% of the day: pictures go first, summaries last.
 - **Local by default.** The summaries come from your own GPU. Only the X backend you pay sees your follow list.
 
 ## Setup
@@ -79,7 +79,7 @@ Once, in the LM Studio app:
 python scripts\run_headless.py --24h
 ```
 
-It starts LM Studio's server, fetches, summarizes, writes `digests/<date>-<hour>-24h-brief.md` and stops the server. Add `--time 10` for a ten-minute brief, or use `--since-last-run` instead of `--24h` for only what is new since your last one.
+It starts LM Studio's server, fetches, summarizes, writes `digests/<date>-<hour>-24h-brief.md` and stops the server. Add `--keep 30` for a brief 30% the size of the whole day, or use `--since-last-run` instead of `--24h` for only what is new since your last one.
 
 ## Who you follow
 
@@ -112,7 +112,7 @@ Each x.com link is recognised as an X Article, a thread, a long post or a post; 
 
 | | |
 | --- | --- |
-| [Usage](docs/usage.md) | Every command and flag, the settings, the brief part by part, reading time, troubleshooting |
+| [Usage](docs/usage.md) | Every command and flag, the settings, the brief part by part, its size and how to cut it, troubleshooting |
 | [Without the laptop](docs/remote.md) | A daily brief from a small VPS, asked for from the phone ([setup](docs/remote-setup.md)) |
 | [Read later](readlater/README.md) | Saved X posts, Articles, threads and web pages summarized into one page |
 | [Design and changelog](docs/digest-summary.md) | How the brief is built, and why |

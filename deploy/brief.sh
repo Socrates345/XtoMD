@@ -5,14 +5,14 @@
 #
 #   bash deploy/brief.sh 24h        everything published in the last 24 hours
 #   bash deploy/brief.sh since      only what is new since the last brief this machine made
-#   bash deploy/brief.sh 24h 10     the same, fitted to a 10-minute read
+#   bash deploy/brief.sh 24h 30     the same, cut to 30% of the whole day (about what a 10-minute brief was)
 #
 # The settings (which model server, the keys, where to copy the brief, which topic to notify) come from .env at the
 # repo root, never from the command line: deploy/env.example lists them, docs/remote.md explains them.
 set -euo pipefail
 
 usage() {
-    echo "usage: brief.sh 24h|since [MINUTES]" >&2
+    echo "usage: brief.sh 24h|since [PERCENT]" >&2
     exit 2
 }
 
@@ -22,8 +22,12 @@ case "$1" in
     since) window=--since-last-run ;;
     *) usage ;;
 esac
-minutes="${2:-}"
-[[ -z "$minutes" || "$minutes" =~ ^[0-9]{1,3}$ ]] || usage
+keep=""  # the share of the whole day to keep: 1 to 100, "30" or "30%"
+if [[ $# -eq 2 ]]; then
+    keep="${2%\%}"
+    [[ "$keep" =~ ^[0-9]{1,3}$ && 10#$keep -ge 1 && 10#$keep -le 100 ]] || usage
+    keep=$((10#$keep))
+fi
 
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 cd "$repo"
@@ -55,8 +59,8 @@ for brief in "$digests"/*-brief*.md; do
 done
 
 args=("$window" --wait 0)  # nobody is there to start a server that is down: fail now, not in 15 minutes
-if [[ -n "$minutes" ]]; then
-    args+=(--time "$minutes")
+if [[ -n "$keep" ]]; then
+    args+=(--keep "$keep")
 fi
 code=0
 "$python" scripts/make_brief.py "${args[@]}" || code=$?

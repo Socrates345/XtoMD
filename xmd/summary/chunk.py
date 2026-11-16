@@ -53,7 +53,7 @@ MIN_ITEMS_SHARE = 0.25  # fewer items than this share of the limit is not a summ
 # a recap chunk needs more: 5 themes passed for 74 posts, although the replies used about half their word target
 MIN_ITEMS_SHARES = {RECAP: 0.5}
 
-# What share of each tier's full-text words the brief may keep, before the level factor (docs/digest-summary.md, "Size and reading time"). For the
+# What share of each tier's full-text words the brief may keep, before the level factor (docs/digest-summary.md, "Size"). For the
 # regular posts it is the run's compression ratio, summary words over source words (--compression in
 # scripts/run_system.py): the plan's scenario A was 0.30, B 0.10, and the default sits between them since the reader
 # asked for it on 2026-10-15. Plain retweets and the recap group

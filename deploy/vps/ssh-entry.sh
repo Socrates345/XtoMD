@@ -5,7 +5,7 @@
 #
 # sshd then runs this script whatever the phone asked for, and hands it the request in SSH_ORIGINAL_COMMAND:
 #
-#   ssh xmd-vps run 24h       make a brief now (brief.sh's arguments: 24h|since [MINUTES])
+#   ssh xmd-vps run 24h       make a brief now (brief.sh's arguments: 24h|since [PERCENT])
 #   ssh xmd-vps pull          the briefs written in the last day, as a tar stream on stdout
 #   ssh xmd-vps pull 7        ... in the last 7 days
 #
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 refuse() {
-    echo "allowed: run 24h|since [MINUTES] | pull [DAYS]" >&2
+    echo "allowed: run 24h|since [PERCENT] | pull [DAYS]" >&2
     exit 2
 }
 

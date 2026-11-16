@@ -52,12 +52,15 @@ def test_the_calls_made_here_go_to_the_runs_own_server_with_the_runs_own_extra_b
         assert engine.extra_body == {}  # a run made before there was one
 
 
-def test_time_and_compression_are_one_or_the_other(capsys):
+def test_a_share_kept_and_a_compression_are_one_or_the_other(capsys):
     with pytest.raises(SystemExit):
-        run_system.main(["--time", "10", "--compression", "0.1", "--dry-run"])
+        run_system.main(["--keep", "30", "--compression", "0.1", "--dry-run"])
     assert "not allowed with argument" in capsys.readouterr().err
-    with pytest.raises(argparse.ArgumentTypeError, match="number of minutes"):
-        run_system.time_budget("ten")
+    with pytest.raises(argparse.ArgumentTypeError, match="not a percentage"):
+        run_system.keep_share("ten")
+    with pytest.raises(SystemExit):
+        run_system.main(["--time", "10", "--dry-run"])  # minutes are gone: said so, not taken for --timeout
+    assert "use --keep PCT" in capsys.readouterr().err
     with pytest.raises(argparse.ArgumentTypeError, match="not JSON"):
         run_system.extra_body("{thinking: off}")
 
@@ -75,37 +78,37 @@ def test_the_translations_are_reported_in_one_line_with_the_number_really_transl
         "translations: 0 posts translated into en")  # not "none needed": nobody knows, and the failure is printed under it
 
 
-# the brief without its summaries, uncut and at its barest: 2 minutes of priority tweets, 17 of image tweets
-WHOLE = {"minutes_at_your_pace": 20.5, "band_minutes": {"priority": 2.0, "images": 17.0, "trending": 1.0}}
-BAREST = {"minutes_at_your_pace": 3.5, "band_minutes": {"priority": 2.0, "images": 0.2, "trending": 1.0}}
+# the brief without its summaries, uncut and at its barest, as brief_length weighs them (the old minutes x 40)
+WHOLE = {"length": 820, "band_lengths": {"priority": 80, "images": 680, "trending": 40}}
+BAREST = {"length": 140, "band_lengths": {"priority": 80, "images": 8, "trending": 40}}
 
 
-def test_a_reading_time_says_how_the_time_is_shared_at_the_readers_pace():
-    lines = run_system._sizing_lines(10, Sizing(0.21, 26.5, 5.0, 5.0), False, WHOLE, BAREST)
-    assert lines[0] == "time 10 min (40 lines a minute, 4 s a picture): uncut, this brief would take ~26 min. So:"
-    assert (f"summaries        ~5.0 min at most, compression 0.21 (lowered from {MAX_COMPRESSION:.2f} to fit half the time)"
-            in lines[1])
-    assert "priority tweets  ~2.0 min, in full" in lines[2]
-    assert "image tweets     ~1.5 min of the ~17.0 they take whole" in lines[3]  # 10 - 3.5 - 5.0
+def test_a_share_kept_says_how_it_is_spent():
+    lines = run_system._sizing_lines(40, 1000, 400, Sizing(0.21, 1060, 200, 200), False, WHOLE, BAREST)
+    assert lines[0] == "keep 40%: the whole day weighs ~1000 lines (pictures counted as lines), so ~400 to keep. So:"
+    assert (f"summaries        ~200 at most (20% of the day), compression 0.21 (lowered from {MAX_COMPRESSION:.2f} "
+            "to fit half of it)") in lines[1]
+    assert "priority tweets  ~80, in full" in lines[2]
+    assert "image tweets     ~60 of the ~680 they take whole" in lines[3]  # 400 - 140 - 200
     assert "longer than asked" not in "\n".join(lines)
 
 
-def test_a_reading_time_the_whole_brief_fits_cuts_nothing_and_says_so_in_one_line():
-    lines = run_system._sizing_lines(30, Sizing(MAX_COMPRESSION, 26.5, 5.7, 30), False, WHOLE, BAREST)
-    assert lines == ["time 30 min (40 lines a minute, 4 s a picture): the whole brief takes ~26 min at most, "
-                     f"so nothing is cut (compression {MAX_COMPRESSION:.2f})"]
+def test_a_share_the_whole_brief_fits_cuts_nothing_and_says_so_in_one_line():
+    lines = run_system._sizing_lines(100, 820, 820, Sizing(MAX_COMPRESSION, 820, 0, 820), False, WHOLE, BAREST)
+    assert lines == ["keep 100%: the whole day weighs ~820 lines (pictures counted as lines), so ~820 to keep; "
+                     f"the whole brief fits, so nothing is cut (compression {MAX_COMPRESSION:.2f})"]
 
 
-def test_a_reading_time_keeps_the_usual_compression_when_only_the_image_tweets_have_to_give():
-    lines = run_system._sizing_lines(20, Sizing(MAX_COMPRESSION, 26.5, 5.7, 10), False, WHOLE, BAREST)
+def test_a_share_kept_keeps_the_usual_compression_when_only_the_image_tweets_have_to_give():
+    lines = run_system._sizing_lines(75, 1000, 750, Sizing(MAX_COMPRESSION, 1060, 228, 375), False, WHOLE, BAREST)
     assert f"compression {MAX_COMPRESSION:.2f} (the usual one: they have the room)" in lines[1]
-    assert "image tweets     ~10.8 min of the ~17.0" in lines[3]
+    assert "image tweets     ~382 of the ~680" in lines[3]
 
 
-def test_a_reading_time_too_short_for_the_digest_says_the_brief_may_be_longer():
-    barest = {"minutes_at_your_pace": 2.2, "band_minutes": {"priority": 0.7, "images": 0.2, "trending": 1.0}}
-    lines = run_system._sizing_lines(5, Sizing(0.10, 26.5, 3.2, 2.5), True, WHOLE, barest)
-    assert "compression 0.10 (the lowest there is, though more than half the time)" in lines[1]
-    assert "one line each (in full ~2.0 min: too long for the brief to fit)" in lines[2]
-    assert "image tweets     ~0.0 min" in lines[3]
-    assert lines[4] == "  that is more than 5 min: the brief may come out longer than asked"
+def test_a_share_too_small_for_the_digest_says_the_brief_may_be_longer():
+    barest = {"length": 88, "band_lengths": {"priority": 28, "images": 8, "trending": 40}}
+    lines = run_system._sizing_lines(20, 1000, 200, Sizing(0.10, 1060, 128, 100), True, WHOLE, barest)
+    assert "compression 0.10 (the lowest there is, though more than half of it)" in lines[1]
+    assert "one line each (in full ~80: too long for the brief to fit)" in lines[2]
+    assert "image tweets     ~0 of the ~680" in lines[3]
+    assert lines[4] == "  that is more than 20% of the day: the brief may come out longer than asked"

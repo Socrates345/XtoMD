@@ -11,10 +11,9 @@ cached in the run's folder) and the names that were louder than usual against th
 days. It checks every summary against what it was written from and prints only counts. With `language:` set in
 sources.yaml, the tweets it shows word for word (priority, images, trending, the one-liners of a failed chunk) that
 are in a language you don't read are translated, the original quoted under each (cached in the run's folder too).
-A run made with --time (or --time given here) is fitted to that reading time (xmd/summary/budget.py): priority tweets
-become one-liners when they would take more than half of it, or when the brief can't fit otherwise, and image tweets
-keep their pictures only as far as the time allows. A brief
-never replaces an earlier one: when its name is taken, it gets a number (`...-brief-2.md`).
+A run made with --keep (or --keep given here) is cut to that share of the whole day (xmd/summary/budget.py): priority
+tweets become one-liners when they would take more than half of it, or when the brief can't fit otherwise, and image
+tweets keep their pictures only as far as the share allows. A brief never replaces an earlier one: when its name is taken, it gets a number (`...-brief-2.md`).
 
     python scripts\\assemble_brief.py                        # the newest run in digests/.runs
     python scripts\\assemble_brief.py --run qwen-qwen3.5-9b__A__20260920-152052
@@ -37,8 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout, installed or not
 
 from xmd.summary.brief import (  # noqa: E402
-    LINES_PER_MINUTE, SECONDS_PER_IMAGE, WPM_DIAGONAL, WPM_NORMAL, brief_stamp, build_brief, digest_items,
-    load_item_ids, load_run, shown_minutes, summary_items, window_kind,
+    brief_stamp, build_brief, digest_items, load_item_ids, load_run, size_line, summary_items, window_kind,
 )
 from xmd.summary.chunk import parse_export  # noqa: E402
 from xmd.core.config import Language, load_config  # noqa: E402
@@ -49,11 +47,12 @@ from xmd.summary.runner import compression_label  # noqa: E402
 from xmd.summary.sections import load_cache, save_cache, section_inputs, summarize_sections  # noqa: E402
 from xmd.summary.topics import topics_by_section, usage_baseline  # noqa: E402
 from xmd.summary import translate  # noqa: E402
-from xmd.summary.budget import plan_cuts  # noqa: E402
+from xmd.summary.budget import MAX_COMPRESSION, plan_cuts  # noqa: E402
 from xmd.core.tiers import MEDIA, tier_of  # noqa: E402
-from run_system import time_budget  # noqa: E402  (the script next to this one)
+from run_system import keep_share, no_minutes  # noqa: E402  (the script next to this one)
 
 HISTORY_DAYS = 14  # what "louder than usual" is measured against
+OLD_LINES_PER_MINUTE = 40  # a run saved with --time MIN (before --keep) is cut to MIN x this, as it was then
 
 
 def _sha(path: Path) -> str:
@@ -94,11 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", default="sources.yaml", help="path to sources.yaml")
     ap.add_argument("--digests-dir", default="digests")
     ap.add_argument("--out", default="",
-                    help="where to write the brief (default: DIGESTS/<date>-<hour>-<window>[-<N>min]-brief.md, numbered "
+                    help="where to write the brief (default: DIGESTS/<date>-<hour>-<window>[-keep<N>]-brief.md, numbered "
                          "when that name is taken)")
-    ap.add_argument("--time", type=time_budget, default=None, metavar="MIN",
-                    help="fit the brief to this reading time in minutes (default: the run's own --time, if it had one); "
+    ap.add_argument("--keep", type=keep_share, default=None, metavar="PCT",
+                    help="keep this share of the whole day, in percent (default: the run's own --keep, if it had one); "
                          "so any run can be re-cut without summarizing again")
+    ap.add_argument("--time", type=no_minutes, help=argparse.SUPPRESS)  # replaced by --keep
     ap.add_argument("--no-summaries", action="store_true", help="do not call the model for section summaries")
     ap.add_argument("--no-translate", action="store_true",
                     help="show every tweet as posted, whatever `language:` in sources.yaml says (no model call for it)")
@@ -194,15 +194,27 @@ def main(argv: list[str] | None = None) -> int:
             translated=translated, cuts=cuts, fetch_report=fetch_report, ads=ads,
         )
 
-    minutes = args.time or manifest.get("time_budget")
+    keep = args.keep or manifest.get("keep_percent")
+    old_minutes = None if keep else manifest.get("time_budget")  # a run saved before --keep: its minutes, converted
+    keep = None if keep == 100 else keep
+    # the whole day is the brief as written, unless the run lowered the compression to fit: its summaries are then
+    # shorter than the whole day's, and the run's own estimate of the whole day is the one to take (budget.py)
+    lowered = manifest.get("compression_ratio", MAX_COMPRESSION) < MAX_COMPRESSION
+    whole = manifest.get("whole_length") if lowered else None
     priority_sources = frozenset(s.name for s in config.sources if s.priority)
     media = [i for i in items if tier_of(i, priority_sources, config.recap_groups) == MEDIA]
 
+    if old_minutes:
+        uncut = build().stats["length"]
+        share = 100 * old_minutes * OLD_LINES_PER_MINUTE / uncut if uncut else 100
+        keep = round(share) if share < 100 else None
+        print(f"this run was sized for {old_minutes:g} minutes: that is keep {keep or 100:g}% of this digest\n")
+
     def fit(translated=None):
-        """The brief, cut to the reading time when there is one, and the cuts made."""
-        if not minutes:
+        """The brief, cut to the share of the day when there is one, and the cuts made."""
+        if not keep:
             return None, build(translated)
-        return plan_cuts(minutes, lambda cuts: build(translated, cuts), media, levels, config.recap_groups)
+        return plan_cuts(keep, lambda cuts: build(translated, cuts), media, levels, config.recap_groups, whole)
 
     cuts, _brief = fit()  # what to show decides what to translate; the fit is made again with the translations
     translations: dict = {}
@@ -224,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         out = Path(args.out)
     else:
-        stamp = brief_stamp(now, window_kind(export_text), config.tz) + (f"-{minutes:g}min" if minutes else "")
+        stamp = brief_stamp(now, window_kind(export_text), config.tz) + (f"-keep{keep:g}" if keep else "")
         out = _unused(digests / f"{stamp}-brief.md")
     out.write_text(brief.markdown, encoding="utf-8")
 
@@ -238,19 +250,17 @@ def main(argv: list[str] | None = None) -> int:
               f"posts without any summary (failed or not run): {s['posts_without_summary']}")
     if ads:
         print(f"ads: {len(ads)} hidden, linked at the end of the brief")
-    print(f"\nreading time: ~{shown_minutes(s['minutes_at_your_pace'])} min at your pace ({LINES_PER_MINUTE} lines a "
-          f"minute, {SECONDS_PER_IMAGE} s per image); by words: ~{shown_minutes(s['minutes_normal'])} min at "
-          f"{WPM_NORMAL} wpm, ~{shown_minutes(s['minutes_diagonal'])} min at {WPM_DIAGONAL} wpm")
-    if minutes:
+    print(f"\nsize: {size_line(s['lines'], s['images'])}")
+    if keep:
         if cuts is None:
-            print(f"time {minutes:g} min: the whole brief fits, nothing cut")
+            print(f"keep {keep:g}%: the whole brief fits, nothing cut")
         else:
             kept = sum(1 for i in media if cuts.keeps_pictures(i))
-            print(f"time {minutes:g} min: {kept} of {len(media)} image tweets keep their pictures, "
+            print(f"keep {keep:g}%: {kept} of {len(media)} image tweets keep their pictures, "
                   f"{sum(1 for i in media if not cuts.keeps_pictures(i) and cuts.keeps_caption(i))} get a line, "
                   f"the rest a link" + ("; priority tweets as one-liners" if cuts.priority_one_liners else ""))
-            if s["minutes_at_your_pace"] > minutes:
-                print(f"  the shortest this digest makes is ~{shown_minutes(s['minutes_at_your_pace'])} min "
+            if s.get("whole_length") and s["length"] > keep / 100 * s["whole_length"] + 1:
+                print(f"  the shortest this digest makes is {100 * s['length'] / s['whole_length']:.0f}% of the day "
                       "(summaries, trending, a line per priority tweet, links for the images)")
     print(f"\nwritten to {out}")
     return 0

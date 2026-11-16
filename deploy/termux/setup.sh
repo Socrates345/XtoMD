@@ -77,13 +77,14 @@ shortcut() {  # shortcut NAME SCRIPT [ARGUMENT...]: one button in Termux:Widget'
 }
 
 # the buttons an earlier version of this script made, under the names they had then: the list would keep them
-for old in brief-vps-24h brief-vps-10min brief-vps-latest brief-phone-24h brief-phone-10min; do
+for old in brief-vps-24h brief-vps-10min brief-vps-latest brief-phone-24h brief-phone-10min \
+    generate-last-24h-brief-10min-read; do
     rm -f "$shortcuts/$old"
 done
 
 shortcut download-latest-daily-brief "$repo/deploy/termux/vps.sh" pull
 shortcut generate-last-24h-brief "$repo/deploy/termux/vps.sh" run 24h
-shortcut generate-last-24h-brief-10min-read "$repo/deploy/termux/vps.sh" run 24h 10
+shortcut generate-last-24h-brief-keep30 "$repo/deploy/termux/vps.sh" run 24h 30
 shortcut generate-since-last-brief "$repo/deploy/termux/vps.sh" run since
 
 echo "== settings"

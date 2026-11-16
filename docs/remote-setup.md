@@ -262,7 +262,7 @@ Each line reads `256 SHA256:... name (ED25519)`. The `SHA256:...` value is the k
 
 ```bash
 ssh xmd-vps pull | tar -tf -        # lists the brief made in part 2
-ssh xmd-vps ls                      # must be refused: "allowed: run 24h|since [MINUTES] | pull [DAYS]"
+ssh xmd-vps ls                      # must be refused: "allowed: run 24h|since [PERCENT] | pull [DAYS]"
 ```
 
 **On the phone the command is always `ssh xmd-vps`, never `ssh xmd@VPS_ADDRESS`.** Only the name `xmd-vps` makes SSH read the five lines of `~/.ssh/config` and offer `id_xmd`. Given the address instead, SSH has no key to offer and the server answers `Permission denied (publickey)`, although nothing is wrong with the key. `ssh xmd@VPS_ADDRESS` is the laptop's command: the laptop's key opens a shell, the phone's key never does.
@@ -340,7 +340,7 @@ The second line writes the script the job runs. It stays outside `~/.shortcuts`,
 
 - At the hour set in `OnCalendar=` (`xmd-brief.timer`), the VPS makes the brief by itself, and the phone shows **XtoMD: brief ready** (or **the run failed**: then `generate-since-last-brief`).
 - When you want to read: tap `download-latest-daily-brief`, then open the file from `Documents/xmd-briefs` (or move it into the vault).
-- When you want one now, or shorter: `generate-last-24h-brief` or `generate-last-24h-brief-10min-read` (after a missed daily run, `generate-since-last-brief`). It takes several minutes. If the phone loses the connection meanwhile, the VPS finishes the brief anyway: tap `download-latest-daily-brief` a little later.
+- When you want one now, or shorter: `generate-last-24h-brief` or `generate-last-24h-brief-keep30` (30% of the day) (after a missed daily run, `generate-since-last-brief`). It takes several minutes. If the phone loses the connection meanwhile, the VPS finishes the brief anyway: tap `download-latest-daily-brief` a little later.
 - If the VPS is down: `bash deploy/termux/phone.sh 24h`, once part 4 is done.
 - At home, the laptop works as before. Its briefs and the VPS's are independent.
 

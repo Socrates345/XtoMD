@@ -6,8 +6,8 @@ from xmd.core.models import FeedItem
 from xmd.digest.export import build_export
 from xmd.summary.brief import Cuts, build_brief
 from xmd.summary.budget import (
-    MAX_COMPRESSION, MIN_COMPRESSION, bare_cuts, choose_compression, parse_minutes, plan_cuts, rank_media,
-    summary_lines,
+    MAX_COMPRESSION, MIN_COMPRESSION, SUMMARY_FILL, bare_cuts, choose_compression, parse_keep, plan_cuts,
+    rank_media, summary_lines,
 )
 from xmd.summary.chunk import make_chunks, parse_export, tier_shares
 
@@ -44,57 +44,59 @@ def _build(cuts=None):
                        priority_sources=PRIORITY, levels=LEVELS, cuts=cuts)
 
 
-def _minutes(brief):
-    return brief.stats["minutes_at_your_pace"]
+def _length(brief):
+    return brief.stats["length"]
 
 
-def test_a_reading_time_is_minutes_with_or_without_the_unit():
-    assert parse_minutes("10") == 10 and parse_minutes(" 7.5min ") == 7.5
-    for bad in ("0", "-3", "ten", ""):
+def test_a_share_to_keep_is_a_percentage_with_or_without_the_sign():
+    assert parse_keep("30") == 30 and parse_keep(" 7.5% ") == 7.5 and parse_keep("100") == 100
+    for bad in ("0", "-3", "101", "ten", "", "10min"):
         with pytest.raises(ValueError):
-            parse_minutes(bad)
+            parse_keep(bad)
 
 
-LINES = lambda c: round(800 * c)  # 240 lines of summaries at 0.30: 6 minutes; 80 at 0.10: 2 minutes
+LINES = lambda c: round(800 * c)  # 240 lines of summaries at 0.30; 80 at 0.10
 
 
-USUAL = LINES(MAX_COMPRESSION) / 40  # minutes of summaries at the usual compression, 6 at most
+USUAL = LINES(MAX_COMPRESSION)  # lines of summaries at the usual compression, 200 at most
 
 
 def test_the_compression_is_the_usual_one_when_the_whole_brief_fits():
-    sizing = choose_compression(30, 20, 3, LINES)  # 20 minutes of tweets and the summaries
-    assert (sizing.compression, sizing.whole_minutes, sizing.summary_minutes) == (MAX_COMPRESSION, 20 + USUAL, USUAL)
+    sizing = choose_compression(1200, 800, 120, LINES)  # 800 lines of tweets and the summaries
+    assert (sizing.compression, sizing.whole, sizing.summary) == (MAX_COMPRESSION, 800 + USUAL, USUAL)
     assert sizing.fits
 
 
-def test_a_brief_too_long_keeps_the_usual_compression_while_its_summaries_take_no_more_than_half_the_time():
-    # 26 minutes at most for 20, or for 12: the image tweets are cut, not the summaries
-    assert choose_compression(20, 20, 3, LINES).compression == MAX_COMPRESSION
-    assert choose_compression(12, 20, 3, LINES).compression == MAX_COMPRESSION
-    assert choose_compression(12, 20, 3, LINES).whole_minutes == 20 + USUAL
+def test_a_brief_too_long_keeps_the_usual_compression_while_its_summaries_take_no_more_than_half_of_it():
+    # 1,000 lines at most for 800, or for 480: the image tweets are cut, not the summaries
+    assert choose_compression(800, 800, 120, LINES).compression == MAX_COMPRESSION
+    assert choose_compression(480, 800, 120, LINES).compression == MAX_COMPRESSION
+    assert choose_compression(480, 800, 120, LINES).whole == 800 + USUAL
 
 
-def test_summaries_that_would_take_more_than_half_the_time_get_the_highest_compression_that_does_not():
-    sizing = choose_compression(10, 20, 3, LINES)  # 6 minutes of summaries for 10: they may take 5
-    assert sizing.compression == 0.25 and sizing.summary_minutes == 5 and sizing.room == 5 and sizing.fits
-    assert choose_compression(8, 20, 3, LINES).compression == 0.20
+def test_summaries_that_would_take_more_than_half_of_it_get_the_highest_compression_that_does_not():
+    sizing = choose_compression(400, 800, 120, LINES)  # 200 lines of summaries for 400: they may take 200
+    assert sizing.compression == 0.25 and sizing.summary == 200 and sizing.room == 200 and sizing.fits
+    assert choose_compression(320, 800, 120, LINES).compression == 0.20
 
 
 def test_summaries_take_no_more_than_what_the_barest_brief_leaves():
-    sizing = choose_compression(10, 20, 7, LINES)  # priority tweets and trending are 7 of the 10 minutes
-    assert sizing.compression == 0.15 and sizing.room == 3 and sizing.fits
+    sizing = choose_compression(400, 800, 280, LINES)  # priority tweets and trending are 280 of the 400
+    assert sizing.compression == 0.15 and sizing.room == 120 and sizing.fits
 
 
 def test_the_compression_is_never_under_the_floor_and_the_sizing_says_when_that_is_too_long():
-    sizing = choose_compression(3, 20, 2, LINES)  # 1 minute left, and the thinnest summaries take 2
-    assert sizing.compression == MIN_COMPRESSION and sizing.summary_minutes == 2 and not sizing.fits
-    assert choose_compression(4, 20, 2, LINES).fits  # 2 minutes for 2: the floor, and it fits
+    sizing = choose_compression(120, 800, 80, LINES)  # 40 lines left, and the thinnest summaries take 80
+    assert sizing.compression == MIN_COMPRESSION and sizing.summary == 80 and not sizing.fits
+    assert choose_compression(160, 800, 80, LINES).fits  # 80 lines for 80: the floor, and it fits
 
 
 def test_summary_lines_count_a_bullet_per_allowed_item_and_the_headings_of_their_sections():
     chunks = make_chunks(POSTS, REPEATED, tier_shares(0.3), 3750, levels=LEVELS)
     assert summary_lines(chunks) == sum(c.max_items for c in chunks) + 4 * len({p.section for c in chunks for p in c.posts})
     assert summary_lines(make_chunks(POSTS, REPEATED, tier_shares(0.1), 3750, levels=LEVELS)) <= summary_lines(chunks)
+    sections = 4 * len({p.section for c in chunks for p in c.posts})
+    assert summary_lines(chunks, SUMMARY_FILL) == SUMMARY_FILL * sum(c.max_items for c in chunks) + sections
 
 
 def test_image_tweets_take_turns_across_sections_by_level_and_across_sources():
@@ -116,49 +118,60 @@ def test_a_recap_groups_image_tweets_take_turns_as_a_low_groups_do_whatever_its_
 
 
 def test_a_brief_that_fits_is_not_cut():
-    cuts, brief = plan_cuts(_minutes(_build()) + 1, _build, MEDIA, LEVELS)
+    cuts, brief = plan_cuts(100, _build, MEDIA, LEVELS)
     assert cuts is None and brief.markdown == _build().markdown
+    assert brief.stats["whole_length"] == _length(_build())
 
 
-def test_a_tight_time_cuts_pictures_to_lines_and_links_and_the_brief_fits():
-    full = _minutes(_build())
-    cuts, brief = plan_cuts(full / 2, _build, MEDIA, LEVELS)
-    assert _minutes(brief) <= full / 2
+def test_the_whole_day_given_is_the_one_the_share_is_taken_of():
+    full = _length(_build())
+    cuts, brief = plan_cuts(50, _build, MEDIA, LEVELS, whole=2 * full)  # half of twice the brief: all of it
+    assert cuts is None and brief.stats["whole_length"] == round(2 * full, 1)
+    cuts, brief = plan_cuts(50, _build, MEDIA, LEVELS, whole=full)
+    assert cuts is not None and _length(brief) <= full / 2
+
+
+def test_a_small_share_cuts_pictures_to_lines_and_links_and_the_brief_fits():
+    full = _length(_build())
+    cuts, brief = plan_cuts(50, _build, MEDIA, LEVELS)
+    assert _length(brief) <= full / 2
     kept = [i for i in MEDIA if cuts.keeps_pictures(i)]
     lined = [i for i in MEDIA if not cuts.keeps_pictures(i) and cuts.keeps_caption(i)]
     assert kept and lined and len(kept) < len(MEDIA)
     md = brief.markdown
     assert md.count("![](") == sum(len(i.images) for i in kept)
     assert "- 🖼 **@pic" in md  # a line instead of the pictures
-    assert f"fitted to {full / 2:g} min: {len(kept)} of 40 image tweets with pictures" in md
+    assert f"kept 50%: {len(kept)} of 40 image tweets with pictures" in md
 
 
-def test_priority_tweets_become_one_liners_only_when_in_full_they_take_more_than_half_the_time():
-    priority = _build().stats["band_minutes"]["priority"]
-    cuts, brief = plan_cuts(priority * 2 + 0.5, _build, MEDIA, LEVELS)
+def test_priority_tweets_become_one_liners_only_when_in_full_they_take_more_than_half_of_what_is_kept():
+    full = _length(_build())
+    priority = _build().stats["band_lengths"]["priority"]
+    cuts, brief = plan_cuts(100 * (priority * 2 + 20) / full, _build, MEDIA, LEVELS)
     assert not cuts.priority_one_liners and "second paragraph" in brief.markdown
-    cuts, brief = plan_cuts(priority * 2 - 0.5, _build, MEDIA, LEVELS)
+    cuts, brief = plan_cuts(100 * (priority * 2 - 20) / full, _build, MEDIA, LEVELS)
     assert cuts.priority_one_liners and "Cut to one line each" in brief.markdown
     assert "priority news number 3 with a second paragraph" in brief.markdown  # one line, both paragraphs
 
 
-def test_priority_tweets_under_half_the_time_still_become_one_liners_when_in_full_the_brief_cannot_fit():
+def test_priority_tweets_under_half_of_it_still_become_one_liners_when_in_full_the_brief_cannot_fit():
     full = _build()
-    priority = full.stats["band_minutes"]["priority"]
-    minutes = priority * 2 + 0.1  # under their share: in full by the rule
-    assert not bare_cuts(minutes, full).priority_one_liners
+    priority = full.stats["band_lengths"]["priority"]
+    target = priority * 2 + 4  # under their share: in full by the rule
+    keep = 100 * target / _length(full)
+    assert not bare_cuts(target, full, keep).priority_one_liners
 
     def crowded(cuts=None):  # a brief whose other parts leave no room for the priority tweets in full
         brief = _build(cuts)
-        brief.stats["minutes_at_your_pace"] += priority + 0.2
+        brief.stats["length"] += priority + 8
         return brief
 
-    cuts, brief = plan_cuts(minutes, crowded, MEDIA, LEVELS)
+    cuts, brief = plan_cuts(keep, crowded, MEDIA, LEVELS, whole=_length(full))
     assert cuts.priority_one_liners and "Cut to one line each" in brief.markdown
-    assert _minutes(brief) <= minutes
+    assert _length(brief) <= target + 1e-9
 
 
-def test_a_time_shorter_than_the_barest_brief_gives_the_barest_brief():
-    cuts, brief = plan_cuts(0.5, _build, MEDIA, LEVELS)
-    assert cuts == Cuts(0.5, True, frozenset(), frozenset())
+def test_a_share_smaller_than_the_barest_brief_gives_the_barest_brief():
+    cuts, brief = plan_cuts(1, _build, MEDIA, LEVELS)
+    assert cuts == Cuts(1, True, frozenset(), frozenset())
     assert "![](" not in brief.markdown and "🖼 30 more:" in brief.markdown

@@ -3,7 +3,7 @@
 # (.env at the repo root names it). No home-screen button runs this: it is a command to type:
 #
 #   bash deploy/termux/phone.sh 24h         everything published in the last 24 hours
-#   bash deploy/termux/phone.sh 24h 10      ... fitted to a 10-minute read
+#   bash deploy/termux/phone.sh 24h 30      ... cut to 30% of the whole day
 #   bash deploy/termux/phone.sh since       only what is new since the last brief the phone made
 #
 # The brief is copied to XMD_BRIEF_DEST (.env), or to Documents/xmd-briefs when .env names no folder: without

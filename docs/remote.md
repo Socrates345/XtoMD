@@ -157,7 +157,7 @@ set -a; . ./.env; set +a
 ```bash
 bash deploy/brief.sh 24h        # everything published in the last 24 hours
 bash deploy/brief.sh since      # only what is new since the last brief this machine made
-bash deploy/brief.sh 24h 10     # fitted to a 10-minute read (any number of minutes)
+bash deploy/brief.sh 24h 30     # cut to 30% of the whole day (any share from 1 to 100; 30 is about the old 10 minutes)
 ```
 
 **On the phone, to the VPS** (what the buttons run):
@@ -177,7 +177,7 @@ By hand, the phone reaches the VPS as `ssh xmd-vps` (`ssh xmd-vps pull | tar -tf
 
 ```bash
 bash deploy/termux/phone.sh 24h          # made on the phone itself, then copied to the briefs folder
-bash deploy/termux/phone.sh 24h 10       # ... fitted to a 10-minute read
+bash deploy/termux/phone.sh 24h 30       # ... cut to 30% of the whole day
 ```
 
 **The buttons** (Termux:Widget):
@@ -186,7 +186,7 @@ bash deploy/termux/phone.sh 24h 10       # ... fitted to a 10-minute read
 | --- | --- |
 | `download-latest-daily-brief` | `vps.sh pull`: the timer's daily brief |
 | `generate-last-24h-brief` | `vps.sh run 24h` |
-| `generate-last-24h-brief-10min-read` | `vps.sh run 24h 10` |
+| `generate-last-24h-brief-keep30` | `vps.sh run 24h 30` |
 | `generate-since-last-brief` | `vps.sh run since`: what is new since the last brief the VPS made |
 
 **On the VPS, as root:**
@@ -214,7 +214,7 @@ Venice's retention is a promise that cannot be checked from outside. Handles are
 
 **What limits the damage:**
 
-- **The phone's key is restricted.** Its line in `authorized_keys` forces `ssh-entry.sh`, which accepts `run 24h|since [MINUTES]` and `pull [DAYS]` and refuses anything else, including any request containing a character other than lowercase letters, digits and spaces. A lost phone can start a brief and read briefs. It cannot open a shell, read `sources.yaml` or copy files. Deleting the line revokes it.
+- **The phone's key is restricted.** Its line in `authorized_keys` forces `ssh-entry.sh`, which accepts `run 24h|since [PERCENT]` and `pull [DAYS]` and refuses anything else, including any request containing a character other than lowercase letters, digits and spaces. A lost phone can start a brief and read briefs. It cannot open a shell, read `sources.yaml` or copy files. Deleting the line revokes it.
 - **The app has its own user**, `xmd`, with no password and no sudo.
 - **The timer's unit is sandboxed:** it can write inside the repo only (`ProtectSystem=strict`), gets a private `/tmp` and cannot gain privileges.
 - **SSH is by key only** and is the only open port.
@@ -301,7 +301,7 @@ systemctl daemon-reload
 | `a brief is already being made on this machine` (exit 75) | The timer's run and yours overlapped, or you asked again after a lost connection while the first brief was still being finished. Wait a few minutes, then `download-latest-daily-brief`. |
 | `the connection to the VPS failed or was lost` on the phone | No network, or it dropped during the run. A brief that had started is finished on the VPS all the same: `download-latest-daily-brief` in a few minutes. If it never arrives, the run had not started: ask again. |
 | Nothing new for a while after `[2/5] fetch` | The fetch is the long step: the X backend limits how fast accounts are read. It prints `fetching sources: N/TOTAL` every 30 seconds. |
-| `allowed: run 24h\|since [MINUTES] \| pull [DAYS]` | The VPS refused a request the phone's key may not make. That is the limit working. |
+| `allowed: run 24h\|since [PERCENT] \| pull [DAYS]` | The VPS refused a request the phone's key may not make. That is the limit working. |
 | `Permission denied (publickey)` from the phone | **First the command:** on the phone it is `ssh xmd-vps`, not `ssh xmd@VPS_ADDRESS`. Only the name `xmd-vps` makes SSH offer the phone's key (the `Host xmd-vps` lines of `~/.ssh/config`); given the address it offers none, even though the same command works from the laptop. **Refused with `ssh xmd-vps` too:** the server does not know the key the phone offers. Compare fingerprints: `ssh-keygen -lf ~/.ssh/authorized_keys` on the VPS as `xmd`, `ssh-keygen -lf ~/.ssh/id_xmd.pub` in Termux. **Not listed on the VPS:** the line was added as root (so to root's file), glued to the end of the laptop's line (the VPS then lists one key, with `command="bash ...` in the middle of its line), or changed while being copied; [step 3.3](remote-setup.md#33-the-key) has the repair for each. **Listed:** the phone offers another key or asks another user: `ssh -G xmd-vps \| grep -E "^(hostname\|user\|identityfile) "` must show the server's address, `xmd` and `id_xmd`. |
 | `config error: ...` as soon as `brief.sh` starts | `sources.yaml` on this machine: the message names the file or the setting. A path setting left empty (`storage:`, `digest_dir:`) means its default, `xmd.db` and `digests`. |
 | The timer's run fails with `Read-only file system` | `storage:` or `digest_dir:` in `sources.yaml` points outside the repo, the only place the unit may write. |

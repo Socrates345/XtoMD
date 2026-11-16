@@ -70,15 +70,19 @@ def _calls(repo: Path) -> list[str]:
 @pytest.mark.parametrize("args, asked", [
     (["24h"], "scripts/make_brief.py --24h --wait 0"),
     (["since"], "scripts/make_brief.py --since-last-run --wait 0"),
-    (["24h", "10"], "scripts/make_brief.py --24h --wait 0 --time 10"),
+    (["24h", "30"], "scripts/make_brief.py --24h --wait 0 --keep 30"),
+    (["since", "30%"], "scripts/make_brief.py --since-last-run --wait 0 --keep 30"),
+    (["24h", "100"], "scripts/make_brief.py --24h --wait 0 --keep 100"),
+    (["24h", "007"], "scripts/make_brief.py --24h --wait 0 --keep 7"),
 ])
-def test_a_brief_is_made_for_the_window_and_the_reading_time_asked_for_and_no_server_is_waited_for(repo, args, asked):
+def test_a_brief_is_made_for_the_window_and_the_share_asked_for_and_no_server_is_waited_for(repo, args, asked):
     assert _run(repo, "brief.sh", *args).returncode == 0
     assert _calls(repo) == [asked]
 
 
-@pytest.mark.parametrize("args", [[], ["48h"], ["24h", "ten"], ["24h", "10", "more"], ["24h; id"], ["--24h"]])
-def test_anything_but_a_window_and_a_number_of_minutes_is_refused_before_anything_runs(repo, args):
+@pytest.mark.parametrize("args", [[], ["48h"], ["24h", "ten"], ["24h", "30", "more"], ["24h; id"], ["--24h"],
+                                  ["24h", "0"], ["24h", "101"], ["24h", "10min"], ["24h", "%"], ["24h", ""]])
+def test_anything_but_a_window_and_a_percentage_is_refused_before_anything_runs(repo, args):
     done = _run(repo, "brief.sh", *args)
     assert done.returncode == 2 and b"usage" in done.stderr
     assert _calls(repo) == []
@@ -244,8 +248,8 @@ def test_a_notification_that_cannot_be_sent_fails_nothing_else(repo, tmp_path):
 def test_a_brief_made_on_the_phone_goes_to_documents_unless_dot_env_names_another_folder(repo, tmp_path):
     home = repo.parent  # what _run gives the scripts as $HOME
 
-    assert _run(repo, "termux/phone.sh", "24h", "10").returncode == 0
-    assert _calls(repo) == ["scripts/make_brief.py --24h --wait 0 --time 10"]
+    assert _run(repo, "termux/phone.sh", "24h", "30").returncode == 0
+    assert _calls(repo) == ["scripts/make_brief.py --24h --wait 0 --keep 30"]
     assert (home / "storage" / "shared" / "Documents" / "xmd-briefs" / "2026-10-06-5pm-24h-brief.md").exists()
 
     (repo / "digests" / "2026-10-06-5pm-24h-brief.md").unlink()  # the stand-in writes the same name every time
@@ -273,7 +277,7 @@ def _asked(repo: Path) -> list[str]:
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
-@pytest.mark.parametrize("request_, passed_on", [("run 24h", "24h"), ("run since", "since"), ("run 24h 10", "24h 10"),
+@pytest.mark.parametrize("request_, passed_on", [("run 24h", "24h"), ("run since", "since"), ("run 24h 30", "24h 30"),
                                                  ("  run   since   30 ", "since 30")])
 def test_the_phone_may_ask_for_a_brief(vps, request_, passed_on):
     assert _ssh(vps, request_).returncode == 0
@@ -293,7 +297,7 @@ def test_what_the_brief_prints_and_how_it_ends_reach_the_phone_and_nothing_is_le
 def test_a_brief_asked_for_from_the_phone_is_finished_even_if_the_phone_goes_away(vps):
     (vps / "deploy" / "brief.sh").write_text(
         'echo started\nsleep 1\nprintf "%s\\n" "$*" >> "$(dirname "$0")/../asked.log"\n', encoding="utf-8")
-    env = {"PATH": os.environ["PATH"], "HOME": str(vps.parent), "SSH_ORIGINAL_COMMAND": "run 24h 10"}
+    env = {"PATH": os.environ["PATH"], "HOME": str(vps.parent), "SSH_ORIGINAL_COMMAND": "run 24h 30"}
     session = subprocess.Popen(["bash", str(vps / "deploy" / "vps" / "ssh-entry.sh")], env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     assert session.stdout.readline() == b"started\n"
@@ -305,12 +309,12 @@ def test_a_brief_asked_for_from_the_phone_is_finished_even_if_the_phone_goes_awa
     deadline = time.time() + 10
     while not _asked(vps) and time.time() < deadline:
         time.sleep(0.1)
-    assert _asked(vps) == ["24h 10"]
+    assert _asked(vps) == ["24h 30"]
 
 
 @pytest.mark.parametrize("request_", [
     "", "ls", "bash", "bash -c id", "scp -t /", "rsync --server --sender . /", "cat sources.yaml",
-    "run", "run 48h", "run 24h ten", "run 24h 10 more", "run 24h --time", "run 24h 1e3", "run 24h 1000",
+    "run", "run 48h", "run 24h ten", "run 24h 10 more", "run 24h --keep", "run 24h 30%", "run 24h 1e3", "run 24h 1000",
     "run 24h;id", "run 24h 10;id", "run 24h $(id)", "run 24h `id`", "run 24h 10 && id", "run 24h | id", "run 24h\nid",
     "pull ..", "pull ../..", "pull 1 2", "pull -1", "pull 100", "pull /etc", "pull 1;id",
 ])
@@ -329,7 +333,7 @@ def _names(archive: bytes) -> list[str]:
 def test_pull_sends_the_recent_briefs_and_only_briefs(vps):
     digests = vps / "digests"
     _aged(digests / "2026-10-06-5pm-24h-brief.md", 0.1)
-    _aged(digests / "2026-10-06-6pm-24h-10min-brief-2.md", 0.1)
+    _aged(digests / "2026-10-06-6pm-24h-keep30-brief-2.md", 0.1)
     _aged(digests / "2026-10-01-6pm-24h-brief.md", 5)
     _aged(digests / "2026-10-06-1500.md", 0.1)  # a full digest
     _aged(digests / ".runs" / "a-run" / "run.json", 0.1)
@@ -337,7 +341,7 @@ def test_pull_sends_the_recent_briefs_and_only_briefs(vps):
 
     day = _ssh(vps, "pull")
     assert day.returncode == 0
-    assert _names(day.stdout) == ["2026-10-06-5pm-24h-brief.md", "2026-10-06-6pm-24h-10min-brief-2.md"]
+    assert _names(day.stdout) == ["2026-10-06-5pm-24h-brief.md", "2026-10-06-6pm-24h-keep30-brief-2.md"]
     assert len(_names(_ssh(vps, "pull 7").stdout)) == 3
 
 
@@ -376,10 +380,10 @@ def _phone(repo: Path, tmp_path: Path, *args: str, **env: str) -> subprocess.Com
 def test_from_the_phone_a_brief_is_made_on_the_vps_and_lands_in_the_phones_folder(repo, tmp_path):
     dest = tmp_path / "shared" / "briefs"
 
-    done = _phone(repo, tmp_path, "run", "24h", "10", XMD_BRIEF_DEST=str(dest), XMD_VPS_HOST="my-vps")
+    done = _phone(repo, tmp_path, "run", "24h", "30", XMD_BRIEF_DEST=str(dest), XMD_VPS_HOST="my-vps")
 
     assert done.returncode == 0
-    assert _calls(repo) == ["scripts/make_brief.py --24h --wait 0 --time 10"]
+    assert _calls(repo) == ["scripts/make_brief.py --24h --wait 0 --keep 30"]
     assert (dest / "2026-10-06-5pm-24h-brief.md").read_text(encoding="utf-8") == "the brief\n"
     assert set((repo / "hosts.log").read_text(encoding="utf-8").split()) == {"my-vps"}
 
@@ -418,7 +422,8 @@ def test_the_phone_says_how_to_ask_when_asked_for_something_else(repo, tmp_path)
 # --- termux/setup.sh, the home-screen buttons
 
 # the names setup.sh gave its buttons before: left in place, the widget would list them for ever
-FORMER_BUTTONS = ["brief-vps-24h", "brief-vps-10min", "brief-vps-latest", "brief-phone-24h", "brief-phone-10min"]
+FORMER_BUTTONS = ["brief-vps-24h", "brief-vps-10min", "brief-vps-latest", "brief-phone-24h", "brief-phone-10min",
+                  "generate-last-24h-brief-10min-read"]
 
 
 def _setup(repo: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -450,12 +455,12 @@ def test_setup_leaves_four_buttons_that_ask_the_vps_and_clears_its_former_ones_a
     done = _setup(repo, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    buttons = ["download-latest-daily-brief", "generate-last-24h-brief", "generate-last-24h-brief-10min-read",
+    buttons = ["download-latest-daily-brief", "generate-last-24h-brief", "generate-last-24h-brief-keep30",
                "generate-since-last-brief"]
     assert sorted(p.name for p in shortcuts.iterdir()) == [*buttons, "my-own-button"]
     for button in buttons:
         subprocess.run(["bash", str(shortcuts / button)], check=True, timeout=60)
-    assert _asked(repo) == ["pull", "run 24h", "run 24h 10", "run since"]
+    assert _asked(repo) == ["pull", "run 24h", "run 24h 30", "run since"]
 
 
 def test_setup_installs_no_python_and_gives_the_phone_only_its_own_settings(repo, tmp_path):

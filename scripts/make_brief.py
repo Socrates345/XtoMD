@@ -4,7 +4,7 @@
     python scripts\\make_brief.py --since-last-run     # only what is new since your last digest
     python scripts\\make_brief.py --24h --model qwen   # another model, or part of a name
     python scripts\\make_brief.py --24h --no-fetch     # the store is fresh already
-    python scripts\\make_brief.py --24h --time 10       # a brief you can read in about 10 minutes
+    python scripts\\make_brief.py --24h --keep 30       # 30% the size of the whole day (about the old 10 minutes)
 
 You must choose the window: `--since-last-run` covers what was fetched since your previous digest, so it is
 a short brief when that was recent; `--24h` covers everything published in the last 24 hours, whatever was
@@ -87,9 +87,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Fetch, digest, summarize with LM Studio and assemble the brief.")
     ap.add_argument("--model", default=os.environ.get(MODEL_ENV_VAR, ""),
                     help=f"model id, or part of one (default: ${MODEL_ENV_VAR}, else {DEFAULT_MODEL})")
-    ap.add_argument("--time", type=run_system.time_budget, default=None, metavar="MIN",
-                    help="the reading time to fit the brief to, in minutes (10, 30...); without it the brief is as "
-                         "long as the day was")
+    ap.add_argument("--keep", type=run_system.keep_share, default=None, metavar="PCT",
+                    help="the share of the whole day to keep, in percent (30 or 30%%; 30 is about what a 10-minute "
+                         "brief was); without it the brief is as long as the day was")
+    ap.add_argument("--time", type=run_system.no_minutes, help=argparse.SUPPRESS)  # replaced by --keep
     window = ap.add_mutually_exclusive_group(required=True)  # no default: a short brief must be asked for
     window.add_argument("--since-last-run", dest="window", action="store_const", const="since-run",
                         help="only what was fetched since your last digest: a short brief when that was recent")
@@ -173,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         "--config", args.config,
         *(["--api-key", args.api_key] if args.api_key else []),
         *(["--extra-body", json.dumps(args.extra_body)] if args.extra_body else []),
-        *(["--time", f"{args.time:g}"] if args.time is not None else []),
+        *(["--keep", f"{args.keep:g}"] if args.keep is not None else []),
     ])
     new = sorted(_runs(digests / ".runs") - before)
     if not new:  # nothing was run (the server went away): run_system said why

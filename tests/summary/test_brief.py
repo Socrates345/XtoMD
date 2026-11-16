@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from xmd.summary.brief import (
-    Cuts, brief_stamp, build_brief, digest_item_ids, load_item_ids, load_run, measure, reading_minutes, shown_minutes,
-    window_kind,
+    PICTURE_LINES, Cuts, brief_length, brief_stamp, build_brief, digest_item_ids, load_item_ids, load_run, measure,
+    size_line, window_kind,
 )
 from xmd.summary.chunk import MAX_THEME_IDS, parse_export
 from xmd.digest.export import build_export
@@ -243,27 +243,29 @@ def test_the_contents_link_every_section():
     assert "- [X / business](#X%20/%20business) — 3 entries" in md  # the image tweet, a bullet and a theme
 
 
-def test_the_header_is_the_date_the_reading_time_and_the_full_digest_and_nothing_else():
+def test_the_header_is_the_date_the_size_and_the_full_digest_and_nothing_else():
     brief = _brief()
     lines = brief.markdown.splitlines()
     assert lines[0] == "# X brief — 2026-09-19"  # only the date: no time of day, no model
-    assert lines[2] == "**~5 min read** · [full digest](full.md)"  # the test world is tiny: one step of 5
-    for gone in ("items ·", "sources", "quick digest", "Brief by", "compression", "lines a minute", "priority · "):
+    assert lines[2] == f"**{brief.stats['lines']} lines · 1 picture** · [full digest](full.md)"  # tiny: not rounded
+    for gone in ("items ·", "sources", "quick digest", "Brief by", "compression", "min read", "priority · "):
         assert gone not in "\n".join(lines[:6])
 
 
-def test_a_reading_time_is_told_rounded_up_to_five_minutes():
-    assert [shown_minutes(m) for m in (27, 29, 25, 25.4, 26, 0.2, 3)] == [30, 30, 25, 25, 30, 5, 5]
+def test_a_size_is_lines_rounded_to_ten_from_a_hundred_on_and_the_pictures_when_there_are_any():
+    assert size_line(904, 231) == "~900 lines · 231 pictures"
+    assert size_line(1, 1) == "1 line · 1 picture" and size_line(99, 0) == "99 lines" and size_line(105, 2) == "~100 lines · 2 pictures"
 
 
-def test_the_reading_time_is_lines_at_the_readers_pace_plus_the_pictures_and_the_stats_keep_the_detail():
+def test_the_length_a_share_is_taken_of_is_the_lines_plus_a_weight_per_picture_and_the_stats_keep_the_detail():
     brief = _brief()
-    header = next(line for line in brief.markdown.splitlines() if " min read**" in line)
+    header = brief.markdown.splitlines()[2]
     words, images = measure(brief.markdown)
     assert brief.stats["words"] == words - measure(header)[0] and brief.stats["images"] == images == 1  # not counting the header itself
-    assert brief.stats["minutes_at_your_pace"] == round(brief.stats["lines"] / 40 + 4 / 60, 1)
-    assert brief.stats["minutes_diagonal"] < brief.stats["minutes_normal"]
+    assert brief.stats["length"] == round(brief.stats["lines"] + PICTURE_LINES, 1)
+    assert brief_length(400, 0) == 400 and round(brief_length(0, 15)) == 40  # 15 pictures weigh 40 lines (4 s each at 40 a minute)
     assert set(brief.stats["bands"]) >= {"priority", "images", "summary", "retweet themes", "recap"}
+    assert sum(brief.stats["band_lengths"].values()) <= brief.stats["length"]
 
 
 def test_a_tweet_shown_on_several_lines_counts_every_line_the_reader_meets():
@@ -272,7 +274,7 @@ def test_a_tweet_shown_on_several_lines_counts_every_line_the_reader_meets():
     brief = build_brief([tweet], NOW, [], mapping, [], priority_sources=PRIORITY, recap_groups=RECAP)
     written = [line for line in brief.markdown.splitlines() if line.strip()]
     assert "my own comment" in written and any("the post quoted" in line for line in written)  # a line each
-    assert brief.stats["lines"] == len(written) - 1  # all but the reading-time line, filled in after the count
+    assert brief.stats["lines"] == len(written) - 1  # all but the size line, filled in after the count
 
 
 def test_the_model_that_wrote_the_brief_is_only_an_invisible_comment_at_the_end():
@@ -282,14 +284,15 @@ def test_the_model_that_wrote_the_brief_is_only_an_invisible_comment_at_the_end(
     assert measure(md)[0] == measure(md.replace("<!-- test model -->", ""))[0]  # and it costs the reader nothing
 
 
-def test_a_bigger_brief_reports_a_bigger_number_of_minutes():
+def test_a_bigger_brief_reports_more_lines_and_pictures():
     tweets = [_post(10 + k % 49, f"@i{k}", f"picture tweet {k}", group="business", images=[f"https://img.example/{k}.jpg"])
-              for k in range(90)]  # 90 pictures alone are 6 minutes at 4 seconds each
+              for k in range(90)]
     items = ITEMS + tweets
     _text, mapping = build_export(items, NOW, priority_sources=PRIORITY, recap_groups=RECAP)
     brief = build_brief(items, NOW, [], mapping, [], priority_sources=PRIORITY, recap_groups=RECAP, full_name="full.md")
-    minutes = int(brief.markdown.splitlines()[2].split("~")[1].split(" ")[0])
-    assert minutes >= 10 and minutes == shown_minutes(brief.stats["minutes_at_your_pace"])
+    header = brief.markdown.splitlines()[2]
+    assert brief.stats["lines"] >= 180 and brief.stats["images"] == 91  # a picture and a caption each, and the first brief's
+    assert header == f"**{size_line(brief.stats['lines'], 91)}** · [full digest](full.md)" and "91 pictures" in header
 
 
 def test_a_digests_items_are_read_from_its_item_ids_in_both_markdown_and_html_forms():
@@ -320,7 +323,7 @@ def test_the_brief_links_no_full_digest_when_there_is_none():
         ITEMS, NOW, RECORDS, MAPPING, [], priority_sources=PRIORITY, recap_groups=RECAP,
         levels=LEVELS, full_name="", model_line="test model",
     ).markdown
-    assert md.splitlines()[2].startswith("**~") and md.splitlines()[2].endswith(" min read**")  # no `· [full digest]`
+    assert md.splitlines()[2].startswith("**") and md.splitlines()[2].endswith(" picture**")  # no `· [full digest]`
     assert "full digest" not in md  # not in the recap note either
 
 
@@ -348,7 +351,6 @@ def test_brief_stamp_reads_the_hour_and_date_on_the_configured_clock():
 
 def test_measure_counts_link_text_and_images_but_not_urls_or_markup():
     assert measure("![](http://i/1.jpg) [text](https://u/1) https://u/2 word **bold** <!-- x --> <a id=\"y\"></a>") == (3, 1)
-    assert reading_minutes(230, 0, 230) == 1.0 and reading_minutes(0, 15, 230) == 1.0  # 15 images x 4 s
 
 
 def test_a_saved_run_is_loaded_with_its_records_in_run_order(tmp_path):
@@ -473,7 +475,7 @@ def test_a_brief_whose_fetch_had_trouble_says_so_in_its_first_line_and_ends_with
     md = _brief(fetch_report=report).markdown
 
     top = md.splitlines()[2]
-    assert "min read" in top and top.endswith("⚠ [1 source not fetched](#Fetch%20report)")
+    assert " lines · " in top and top.endswith("⚠ [1 source not fetched](#Fetch%20report)")
     assert _headings(md)[-1] == "## Fetch report"
     assert "- @bob: Server error '520 &lt;none&gt;'" in md and "<none>" not in md
 

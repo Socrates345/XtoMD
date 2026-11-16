@@ -35,7 +35,7 @@ from xmd.core.config import load_config  # noqa: E402
 from xmd.core.store import Store  # noqa: E402
 from xmd.core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, tier_of  # noqa: E402
 
-TIERS = (PRIORITY, MEDIA, REGULAR, RETWEET, RECAP)  # the tier order of the plan's "Size and reading time"
+TIERS = (PRIORITY, MEDIA, REGULAR, RETWEET, RECAP)  # the tier order of the plan's "Size"
 
 
 def _utc(text: str) -> datetime:

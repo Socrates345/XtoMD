@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import html
 import json
-import math
 import re
 import shutil
 import tempfile
@@ -49,14 +48,13 @@ from ..core.tiers import MEDIA, PRIORITY, RECAP, REGULAR, RETWEET, in_recap_grou
 from .topics import Topic
 from ..digest.trending import DEFAULT_SIMILARITY, find_stories
 
-# the plan's reading-speed assumptions (docs/digest-summary.md, "Size and reading time")
-WPM_NORMAL = 230
-WPM_DIAGONAL = 400
-SECONDS_PER_IMAGE = 4
-LINES_PER_MINUTE = 40  # the reader's own pace, measured 2026-09-20: 200 lines in 5 minutes, links clicked included
-# a reading time is told rounded up to this many minutes: how long a brief takes depends on the posts that catch the
-# eye and the links opened, so a closer figure would claim a precision it does not have
-READ_MINUTES_STEP = 5
+# A brief's size is what is in it, not a reading time: the reader skims, so how long a brief takes depends on what
+# catches the eye, not on its length (docs/digest-summary.md, "Size", changelog 25). The header says its lines and
+# pictures. Cutting it to a share of the whole day (`--keep`, budget.py) weighs it by `brief_length`: its non-blank
+# lines, a picture weighing PICTURE_LINES more on top of its own line. That weight is the one the reading times had
+# (measured 2026-09-20: 40 lines a minute, 4 s a picture, so a picture is 4 s of lines), so a share of the day
+# compares with the minutes it replaces: 10 old minutes are 400.
+PICTURE_LINES = 4 * 40 / 60
 MAX_CITES = 4  # links shown per item; the rest are counted (a recap theme has its own cap, chunk.MAX_THEME_IDS)
 PRIORITY_LINE_CHARS = 280  # a priority tweet cut to one line (see Cuts) keeps about a tweet's worth
 
@@ -87,9 +85,9 @@ class Brief:
 
 @dataclass(frozen=True)
 class Cuts:
-    """What a brief leaves out to fit a reading time (`--time`, see budget.py). The default cuts nothing."""
+    """What a brief leaves out to fit a share of the whole day (`--keep`, see budget.py). The default cuts nothing."""
 
-    minutes: float | None = None  # the reading time aimed at, for the header
+    keep: float | None = None  # the share kept, in percent, for the header
     priority_one_liners: bool = False  # priority tweets as one line each, no pictures
     pictures: frozenset[str] | None = None  # image tweets (by item id) shown with their pictures; None: all
     captions: frozenset[str] | None = None  # of the others, those still given a line; the rest are a list of links
@@ -110,19 +108,17 @@ def measure(text: str) -> tuple[int, int]:
     return sum(1 for token in text.split() if any(c.isalnum() for c in token)), images
 
 
-def reading_minutes(words: int, images: int, wpm: int) -> float:
-    return words / wpm + images * SECONDS_PER_IMAGE / 60
+def brief_length(lines: int, images: int) -> float:
+    """What a brief, or part of one, weighs when it is cut to a share of the day: its non-blank lines, plus
+    PICTURE_LINES a picture."""
+    return lines + images * PICTURE_LINES
 
 
-def pace_minutes(lines: int, images: int) -> float:
-    """Minutes at the reader's own pace: LINES_PER_MINUTE non-blank lines, plus SECONDS_PER_IMAGE a picture."""
-    return lines / LINES_PER_MINUTE + images * SECONDS_PER_IMAGE / 60
-
-
-def shown_minutes(minutes: float) -> int:
-    """A reading time as the reader is told it: whole minutes, rounded up to READ_MINUTES_STEP (27 -> 30, 25 -> 25),
-    never under one step."""
-    return max(1, math.ceil(round(minutes) / READ_MINUTES_STEP)) * READ_MINUTES_STEP
+def size_line(lines: int, images: int) -> str:
+    """A brief's size as its header tells it: "~900 lines · 231 pictures". Lines are rounded to ten from a hundred
+    on, so the figure stays easy to compare from one day to the next; no pictures, no mention of them."""
+    shown = f"~{round(lines, -1)}" if lines >= 100 else f"{lines}"
+    return f"{shown} {'line' if lines == 1 else 'lines'}" + (f" · {_count(images, 'picture')}" if images else "")
 
 
 def _content_lines(lines: list[str]) -> int:
@@ -426,7 +422,7 @@ def build_brief(
     come from the frozen export the run read; `levels` are the group levels the run used.
     `topics` and `summaries` (section label -> ...) open the sections they belong to, when given. `translated`
     is asked about every text the brief shows word for word (see translate.py): what it translates is shown
-    translated, the original quoted under it. `cuts` says what to leave out to fit a reading time. `ads` are the
+    translated, the original quoted under it. `cuts` says what to leave out to keep a share of the day. `ads` are the
     posts the run found to be ads (scripts/run_system.py), left out of `items` by the caller: the brief ends with a
     link to each."""
     levels = levels or {}
@@ -438,12 +434,12 @@ def build_brief(
     kept, dropped, repeats = summary_items(records, mapping, repeated, levels, recap_groups)
     cuts = cuts or Cuts()
     words = Counter()  # by band, for the report
-    band_minutes: Counter = Counter()  # by band, at the reader's pace: what a reading time is fitted with
+    band_lengths: Counter = Counter()  # by band, as brief_length weighs them: what a share of the day is cut with
 
     def band(name: str, lines: list[str]) -> list[str]:
         counted_words, images = measure("\n".join(lines))
         words[name] += counted_words
-        band_minutes[name] += pace_minutes(_content_lines(lines), images)
+        band_lengths[name] += brief_length(_content_lines(lines), images)
         return lines
 
     # posts without a usable summary: their chunk failed or was never run
@@ -482,7 +478,7 @@ def build_brief(
                     block += [f"![]({image})", ""]
                 block += [*_one_liner(item, media_chars, translated, caption=True), ""]
             captioned = [i for i in grouped if not cuts.keeps_pictures(i) and cuts.keeps_caption(i)]
-            for item in captioned:  # cut to fit a reading time: a line, and the picture a click away
+            for item in captioned:  # cut to keep a share of the day: a line, and the picture a click away
                 first, *rest = _one_liner(item, snippet_chars, translated)
                 block += [first.replace("- ", "- 🖼 ", 1), *rest]
             linked = [i for i in grouped if not cuts.keeps_pictures(i) and not cuts.keeps_caption(i)]
@@ -543,7 +539,7 @@ def build_brief(
         one_liners = [line for group in groups for line in _retweeted_one_liner(group, translated)]
         one_liners += [line for _source, batch in _grouped_chronological(rest, priority_sources)
                        for i in batch for line in _one_liner(i, PRIORITY_LINE_CHARS, translated)]
-        priority_body = ["*Cut to one line each to fit the reading time; the full tweets are behind the links.*",
+        priority_body = ["*Cut to one line each to keep the brief short; the full tweets are behind the links.*",
                          "", *one_liners, ""]
     else:
         priority_body = _render_priority(priority, priority_sources, translated)
@@ -552,13 +548,13 @@ def build_brief(
     ]) if priority else []
     trending_lines = band("trending", _trending_block(general, priority_sources, snippet_chars, translated))
 
-    # the top of the file: the date, then only how long it takes and where the full digest is
+    # the top of the file: the date, then only how big it is and where the full digest is
     cited = {n for i in kept for n in i.ids}
     regular_posts = sum(1 for r in records if r["tier"] == REGULAR for _ in r["ids"])
     regular_cited = sum(1 for r in records if r["tier"] == REGULAR for n in r["ids"] if n in cited)
     lines = [f"# X brief — {now.strftime('%Y-%m-%d')}", ""]
     estimate_at = len(lines)
-    lines.append("")  # the reading time goes here once the rest is counted
+    lines.append("")  # the size goes here once the rest is counted
     lines.append("")
 
     entries = []
@@ -590,20 +586,16 @@ def build_brief(
     text = "\n".join(lines)
     total_words, total_images = measure(text)
     content_lines = _content_lines(lines)
-    normal = reading_minutes(total_words, total_images, WPM_NORMAL)
-    diagonal = reading_minutes(total_words, total_images, WPM_DIAGONAL)
-    yours = pace_minutes(content_lines, total_images)
-    lines[estimate_at] = (f"**~{shown_minutes(yours)} min read**" + _fitted_note(cuts, items, tiers)
+    lines[estimate_at] = (f"**{size_line(content_lines, total_images)}**" + _fitted_note(cuts, items, tiers)
                           + (f" · [full digest]({full_name})" if full_name else "")
                           + (f" · {fetch_note(fetch_report)}" if fetch_note(fetch_report) else ""))
     if model_line:  # provenance for whoever debugs it, invisible when reading
         lines.append(f"<!-- {model_line} -->")
     return Brief("\n".join(lines) + "\n", {
         "words": total_words, "images": total_images, "lines": content_lines,
-        "minutes_at_your_pace": round(yours, 1),
-        "minutes_normal": round(normal, 1), "minutes_diagonal": round(diagonal, 1),
+        "length": round(brief_length(content_lines, total_images), 1),
         "bands": dict(words),
-        "band_minutes": {name: round(m, 2) for name, m in band_minutes.items()},
+        "band_lengths": {name: round(n, 1) for name, n in band_lengths.items()},
         "summary_items": len(kept), "dropped_items": dropped, "repeated_items": repeats,
         "trending_items": sum(1 for i in kept if i.trending),
         "section_summaries": len(summaries), "louder_topics": sum(len(v) for v in topics.values()),
@@ -625,8 +617,8 @@ def _ads_line(ads: list[FeedItem]) -> str:
 
 
 def _fitted_note(cuts: Cuts, items: list[FeedItem], tiers: dict[str, str]) -> str:
-    """What the header says was left out to fit the reading time, or "" when nothing was."""
-    if cuts.minutes is None:
+    """What the header says was left out to keep a share of the day, or "" when nothing was."""
+    if cuts.keep is None:
         return ""
     media = [i for i in items if tiers[i.id] == MEDIA]
     parts = []
@@ -635,4 +627,4 @@ def _fitted_note(cuts: Cuts, items: list[FeedItem], tiers: dict[str, str]) -> st
         parts.append(f"{with_pictures} of {_count(len(media), 'image tweet')} with pictures")
     if cuts.priority_one_liners:
         parts.append("priority tweets as one-liners")
-    return f" · fitted to {cuts.minutes:g} min" + (f": {', '.join(parts)}" if parts else "")
+    return f" · kept {cuts.keep:g}%" + (f": {', '.join(parts)}" if parts else "")

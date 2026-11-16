@@ -1,6 +1,6 @@
 # Using XtoMD
 
-The [README](../README.md) covers the install and the daily command. This page has the rest: every command and flag, the settings, what the brief holds and how its reading time is counted, and what to do when something goes wrong.
+The [README](../README.md) covers the install and the daily command. This page has the rest: every command and flag, the settings, what the brief holds, how big it is and how to cut it, and what to do when something goes wrong.
 
 ## Daily use
 
@@ -8,10 +8,10 @@ The [README](../README.md) covers the install and the daily command. This page h
 . .\.venv\Scripts\Activate.ps1
 python scripts\run_headless.py --24h             # digests/<date>-<hour>-24h-brief.md, last 24 hours
 python scripts\run_headless.py --since-last-run  # or: only what's new since your last digest
-python scripts\run_headless.py --24h --time 10   # short on time: a brief you can read in ~10 minutes
+python scripts\run_headless.py --24h --keep 30   # short on time: 30% of the whole day (about the old 10 minutes)
 ```
 
-`run_headless.py` starts LM Studio's server, loads the model, fetches, digests, summarizes and assembles the brief, then stops the server again — the GUI never needs to open. `--24h` is everything published in the last 24 hours; `--since-last-run` is only what was fetched since your previous digest, so it's short when that was recent. Either one moves the since-run cursor, once its brief is written (a run that stops before leaves its posts to the next `--since-last-run` brief); you choose the window every time, there's no default. `--time MIN` fits the brief to a reading time (see [Reading time](#reading-time)); without it the brief is as long as the day was.
+`run_headless.py` starts LM Studio's server, loads the model, fetches, digests, summarizes and assembles the brief, then stops the server again — the GUI never needs to open. `--24h` is everything published in the last 24 hours; `--since-last-run` is only what was fetched since your previous digest, so it's short when that was recent. Either one moves the since-run cursor, once its brief is written (a run that stops before leaves its posts to the next `--since-last-run` brief); you choose the window every time, there's no default. `--keep PCT` keeps that share of the whole day (see [Brief size](#brief-size)); without it the brief is as long as the day was.
 
 **Prefer to manage LM Studio's server yourself** (Developer tab, GUI open)? `make_brief.py` takes the same flags and writes the same output, it just expects the server already running:
 
@@ -28,30 +28,30 @@ lms server start --port 1234 --bind 127.0.0.1               # or: LM Studio app,
 lms load qwen/qwen3.5-9b --context-length 8192 --ttl 1800   # --ttl: unloads itself after 30 idle minutes
 xmd fetch
 xmd digest --window 24h                                     # or --window since-run (the default)
-python scripts\run_system.py --model qwen --time 10         # summarizes the newest export (or --compression 0.25)
-python scripts\assemble_brief.py                            # writes digests\<date>-<hour>-<window>-10min-brief.md
+python scripts\run_system.py --model qwen --keep 30         # summarizes the newest export (or --compression 0.25)
+python scripts\assemble_brief.py                            # writes digests\<date>-<hour>-<window>-keep30-brief.md
 lms unload qwen/qwen3.5-9b
 lms server stop
 ```
 
 `run_system.py` takes no window flag: `--24h` and `--since-last-run` belong to `make_brief.py` and `run_headless.py`. It summarizes the newest export that `xmd digest` wrote, whatever window that digest covered.
 
-### Redo a brief with another reading time
+### Redo a brief with another share of the day
 
-Same tweets, shorter or longer brief. Skip `xmd fetch` and `xmd digest`: a new digest covers a different window and moves the since-run cursor. A new brief never replaces an earlier one: its name carries its reading time (`-10min`), and a name already taken gets a number (`...-brief-2.md`).
+Same tweets, shorter or longer brief. Skip `xmd fetch` and `xmd digest`: a new digest covers a different window and moves the since-run cursor. A new brief never replaces an earlier one: its name carries the share it keeps (`-keep30`), and a name already taken gets a number (`...-brief-2.md`).
 
 **Quick:** re-cut the run you already have. Only the image and priority tweets change, the summaries stay as long as they were. It needs the model only to translate tweets it newly shows, when `language:` is set; with the server down they stay as posted:
 
 ```bash
-python scripts\assemble_brief.py --time 10
+python scripts\assemble_brief.py --keep 30
 ```
 
-**Thorough:** summarize again, so the summaries are sized for the time too. It only differs from the quick way when the new time changes the compression (a short time on a long day): `python scripts\run_system.py --time 10 --dry-run` prints the compression it would use, without calling the model.
+**Thorough:** summarize again, so the summaries are sized for the share too. It only differs from the quick way when the new share changes the compression (a small share): `python scripts\run_system.py --keep 30 --dry-run` prints the compression it would use, without calling the model.
 
 ```bash
 lms server start --port 1234 --bind 127.0.0.1
 lms load qwen/qwen3.5-9b --context-length 8192 --ttl 1800
-python scripts\run_system.py --model qwen --time 10
+python scripts\run_system.py --model qwen --keep 30
 python scripts\assemble_brief.py
 lms unload qwen/qwen3.5-9b
 lms server stop
@@ -65,7 +65,7 @@ No laptop, no LM Studio: a small VPS makes the brief every day on a timer, and t
 
 ```bash
 bash deploy/brief.sh 24h        # on the VPS or the phone: reads .env, then runs make_brief.py --24h
-bash deploy/brief.sh 24h 10     # ... fitted to a 10-minute read
+bash deploy/brief.sh 24h 30     # ... cut to 30% of the whole day
 ```
 
 On those machines `.env` (from `deploy/env.example`) names the model server once: `XMD_LLM_BASE_URL`, `XMD_LLM_MODEL`, `XMD_LLM_API_KEY`, `XMD_LLM_EXTRA_BODY`. The scripts read them from the environment, so nothing changes on the laptop, where they are not set.
@@ -116,10 +116,10 @@ Run all commands from the repo root. `--config` and `--version` go before the su
 
 ## The brief
 
-**What you get**, in `digests/<date>-<hour>-<window>-brief.md` (the date and hour the brief was written, on the `timezone:` clock in `sources.yaml`, Europe/Paris by default; `-10min` before `-brief` when fitted to a reading time; `-2`, `-3`... after it rather than replace an earlier brief of the same name):
+**What you get**, in `digests/<date>-<hour>-<window>-brief.md` (the date and hour the brief was written, on the `timezone:` clock in `sources.yaml`, Europe/Paris by default; `-keep30` before `-brief` when cut to a share of the day; `-2`, `-3`... after it rather than replace an earlier brief of the same name):
 
-- A header: date, `~N min read` (and, fitted to a reading time, what was cut), a link to the full digest if `--full` wrote one.
-- **★ Priority**: every priority tweet, in full (one line each when a short `--time` needs it). A post that several of them retweeted or quoted comes first, shown once, with their comments listed under it (the quick digest does the same).
+- A header: date, its size (`~900 lines · 231 pictures`; cut to a share of the day, what was cut), a link to the full digest if `--full` wrote one.
+- **★ Priority**: every priority tweet, in full (one line each when a small `--keep` needs it). A post that several of them retweeted or quoted comes first, shown once, with their comments listed under it (the quick digest does the same).
 - **Trending**: stories two or more sources posted.
 - One section per group, most important first (`high`, normal, `low`, recap last). Each opens with **In short** (written by the model) and **Louder than usual** (names posted far above their normal volume over the last 14 days, counted not guessed), then the group's image tweets whole, summary bullets linking to the posts they cite (🔥 marks a repeated story), and retweet themes.
 - **Fetch report**, only when the fetch had trouble, so that you never have to read a log for it: the accounts the backend no longer knows (renamed, suspended or deleted: correct or remove them in `x.md`), the sources that failed for another reason and why (a server error, say: the next fetch tries again), and the fetch's warnings. It ends the brief, and the header says it is there (`⚠ 2 sources not fetched`). The full and quick digests carry the same section.
@@ -132,65 +132,62 @@ Priority and image tweets never reach a model for a summary; with `language:` se
 
 **Files.** `digests/.runs/<label>/` is one run (`run.json`, one JSON per chunk, `sections.json`); read it with `run_stats.py`; `xmd fetch` deletes old ones (see `xmd fetch` above). `digests/` is git-ignored. On the laptop the summarizing is local, to a server on your own machine; a `--base-url` anywhere else is warned about, and is what a VPS or a phone uses ([Away from the laptop](#away-from-the-laptop)). `xmd fetch` sends your follow list and API key to whichever provider you chose (twitterapi.io or tweetapi.com).
 
-### Reading time
+### Brief size
 
-**How it is counted.** The `~N min read` in the header is your pace, not a word count: **40 lines a minute, plus 4 seconds a picture**. Blank lines are free. It is rounded up to the next 5 minutes (27 → ~30, never under ~5; `READ_MINUTES_STEP` in `xmd/summary/brief.py`): how long a brief really takes depends on the posts that catch your eye and the links you open.
+**What the header says.** `**~900 lines · 231 pictures**`: the brief's non-blank lines and its pictures, the lines rounded to ten from a hundred on. It is a size, not a reading time: you skim, so how long a brief takes depends on what catches your eye and the links you open, not on how long it is. A size stays true however you read it, and it compares from one day to the next. Six whole days (24h briefs, 2026-10-01 to 10-15) came to 667–981 lines and 160–238 pictures.
 
-| In the brief | Costs |
-| --- | --- |
-| A summary bullet, a one-line tweet, a heading | 1 line: 1.5 s |
-| An image tweet shown whole, one picture | 2 lines (picture, caption) + 4 s: 7 s |
-| The same tweet cut to a line (🖼) | 1.5 s |
-| 10 minutes | 400 lines, or about 85 one-picture image tweets |
+**Without `--keep`** the brief is the whole day: the summaries keep 25% of the regular posts' words (`--compression`, default 0.25: `DEFAULT_COMPRESSION` in `xmd/summary/chunk.py`), everything else is shown whole. Most of a brief is not the summaries: on 2026-09-29, image tweets were two thirds of it and priority tweets a fifth, so lowering the compression from 0.25 to 0.10 saves about a thirtieth. The compression is the weak lever, the pictures are the strong one.
 
-The pace is two constants in `xmd/summary/brief.py`, `LINES_PER_MINUTE` and `SECONDS_PER_IMAGE` (measured once: 200 lines in 5 minutes, links clicked). Change them if you read faster or slower: the header, `--time` and everything the scripts print follow.
+**With `--keep PCT`** the brief keeps that share of the whole day (`30` or `30%`, from 1 to 100; `100` cuts nothing). To cut it, a brief is weighed as its lines plus 2.7 lines a picture (`PICTURE_LINES` in `xmd/summary/brief.py`): the weight a picture had in the old reading time (4 seconds at 40 lines a minute), so a share compares with the minutes it replaces. On the six whole days above (weighed 1,094 to 1,616, about 1,330 on a typical day):
 
-**Without `--time`** the brief is as long as the day was: the summaries keep 25% of the regular posts' words (`--compression`, default 0.25: `DEFAULT_COMPRESSION` in `xmd/summary/chunk.py`), everything else is shown whole. Most of the time is not the summaries: on 2026-09-29, image tweets were two thirds of a 30-minute brief and priority tweets a fifth, so lowering the compression from 0.25 to 0.10 saves under a minute. The compression is the weak lever, the pictures are the strong one.
+| Before | Now | Old minutes it gives: light / typical / busy day |
+| --- | --- | --- |
+| `--time 5` | `--keep 15` | ~4 / ~5 / ~6 |
+| `--time 10` | `--keep 30` | ~8 / ~10 / ~12 |
+| `--time 20` | `--keep 60` | ~16 / ~20 / ~24 |
 
-**With `--time MIN`** the brief is fitted to that many minutes at that pace. The time is spent in this order, each part taking from what the ones above leave:
+A share follows the day: a light day gives a shorter brief, a busy one a longer one, where minutes gave the same length every day.
+
+The share is spent in this order, each part taking from what the ones above leave:
 
 | | Part | Rule | Decided |
 | --- | --- | --- | --- |
 | 1 | Header, trending, section headings, **In short** | Always shown. | |
-| 2 | Priority tweets | In full, unless that takes more than half the time, or the brief can't fit otherwise: then one line each, the full tweet behind its link. | when assembled |
-| 3 | Summaries | Compression 0.25, unless they would take more than half the time, or more than 1 and 2 leave: then the highest compression at which they don't, never under 0.10. | before the model runs |
+| 2 | Priority tweets | In full, unless that takes more than half of what is kept, or the brief can't fit otherwise: then one line each, the full tweet behind its link. | when assembled |
+| 3 | Summaries | Compression 0.25, unless they would take more than half of what is kept, or more than 1 and 2 leave: then the highest compression at which they don't, never under 0.10. | before the model runs |
 | 4 | Image tweets | What is left. Half of it shows the first ones whole with their pictures, the rest gives the next ones a line (🖼), and the others are listed as links. They take turns across groups (a `high` group gets three times the share of a `low` one of the same size) and across sources, so one prolific account can't take them all. | when assembled |
 
-So a time a little short of the day costs you pictures only; the summaries get thinner only when they alone would crowd the brief.
+So a share a little under the whole day costs you pictures only; the summaries get thinner only when they alone would crowd the brief.
 
-**Example.** One real digest (2026-10-01, 909 tweets, measured at 0.30 and re-sized here for 0.25): uncut it is ~26 minutes, of which image tweets ~17, summaries ~5 at most, priority tweets ~2.
+**How the whole day is measured.** Twice, each time where what it needs is known:
 
-| You ask for | Compression | Summaries | Priority tweets | Image tweets |
-| --- | --- | --- | --- | --- |
-| no `--time`, or `--time 30` | 0.25 | ~5 min | in full | all whole, ~17 min |
-| `--time 20` | 0.25 | ~5 min | in full | ~11 min of the 17 |
-| `--time 10` | 0.21 | ~5 min: half the time | in full | ~1 min, plus what the summaries don't use |
-| `--time 5` | 0.10 | ~3 min: the floor | one line each | links only; the brief may come out a little longer than asked |
+- `run_system.py`, before the model runs, lays the brief out without its summaries and adds them at 83% of the most the model may write (`SUMMARY_FILL` in `xmd/summary/budget.py`: replies came to 77–89% of it on three real runs). The share of that is the target. To stay under it, the summaries are then counted at the most. It saves this estimate with the run.
+- `assemble_brief.py` measures the brief as written, translations included, and takes the share of that. When the run lowered the compression to fit, its summaries are shorter than the whole day's would be, so it takes the run's estimate instead.
 
-`run_system.py` prints this split before it calls the model:
+`run_system.py` prints the split before it calls the model (numbers for illustration):
 
 ```text
-time 10 min (40 lines a minute, 4 s a picture): uncut, this brief would take ~26 min. So:
-  summaries        ~5.0 min at most, compression 0.21 (lowered from 0.25 to fit half the time)
-  priority tweets  ~2.2 min, in full
-  image tweets     ~1.3 min of the ~17.4 they take whole, plus what the summaries leave unused: pictures first, then a line each, then links
+keep 40%: the whole day weighs ~1000 lines (pictures counted as lines), so ~400 to keep. So:
+  summaries        ~200 at most (20% of the day), compression 0.21 (lowered from 0.25 to fit half of it)
+  priority tweets  ~88, in full
+  image tweets     ~52 of the ~696 they take whole, plus what the summaries leave unused: pictures first, then a line each, then links
   the summaries are sized now; the priority and image tweets are cut when the brief is assembled
 ```
 
-"At most" because the summaries don't exist yet: they are counted as the longest the model may write, and it usually writes about a fifth less. `assemble_brief.py` then measures the brief as written, gives what is left to the image tweets, and prints what it did (`time 10 min: N of M image tweets keep their pictures, K get a line, the rest a link`). The header of the brief says the same: `~10 min read · fitted to 10 min: N of M image tweets with pictures`.
+"At most" because the summaries don't exist yet: they are counted as the longest the model may write. `assemble_brief.py` then measures the brief as written, gives what is left to the image tweets, and prints what it did (`keep 40%: N of M image tweets keep their pictures, K get a line, the rest a link`). The header of the brief says the same: `~430 lines · 20 pictures · kept 40%: N of M image tweets with pictures`.
 
 **Which command does what:**
 
 | You type | Summaries | Priority and image tweets |
 | --- | --- | --- |
-| `run_headless.py --24h` or `make_brief.py --24h` | compression 0.25 | whole: the brief is as long as the day |
-| the same with `--time 10` | sized for 10 minutes (rule 3) | cut to 10 minutes (rules 2 and 4) |
-| `run_system.py --time 10`, then `assemble_brief.py` | the same, by hand | the same: the run remembers its time |
-| `assemble_brief.py --time 10` on a run you already have | unchanged, no model call | re-cut to 10 minutes |
-| `run_system.py --compression 0.15`, then `assemble_brief.py --time 10` | the compression you chose | cut to 10 minutes |
-| `run_system.py --time 10 --dry-run` | prints the split and the compression, calls no model | |
+| `run_headless.py --24h` or `make_brief.py --24h` | compression 0.25 | whole: the brief is the whole day |
+| the same with `--keep 30` | sized for 30% (rule 3) | cut to 30% (rules 2 and 4) |
+| `run_system.py --keep 30`, then `assemble_brief.py` | the same, by hand | the same: the run remembers its share |
+| `assemble_brief.py --keep 30` on a run you already have | unchanged, no model call | re-cut to 30% |
+| `run_system.py --compression 0.15`, then `assemble_brief.py --keep 30` | the compression you chose | cut to 30% of the brief as written |
+| `run_system.py --keep 30 --dry-run` | prints the split and the compression, calls no model | |
 
-A time shorter than the barest brief (summaries at 0.10, trending, a line per priority tweet, links for the images) gives that brief, and `assemble_brief.py` says how long it is.
+A share smaller than the barest brief (summaries at 0.10, trending, a line per priority tweet, links for the images) gives that brief, and `assemble_brief.py` says what share of the day it is. `--time` is gone: typed anyway, it says to use `--keep`. A run saved before, with `--time`, is still re-cut to its minutes (at 40 lines a minute) when assembled again.
 
 ## Scripts reference
 
@@ -222,7 +219,7 @@ Fetch, digest, summarize and assemble in one go. Stops before fetching if LM Stu
 | --- | --- | --- |
 | `--24h` / `--since-last-run` | required, mutually exclusive | The window the brief covers. |
 | `--model NAME` | `qwen/qwen3.5-9b` | Model id, or part of one. |
-| `--time MIN` | unset: the whole day | Fit the brief to a reading time in minutes, e.g. `10` or `30` (see [Reading time](#reading-time)). |
+| `--keep PCT` | unset: the whole day | Keep this share of the whole day, `30` or `30%` (see [Brief size](#brief-size)). |
 | `--no-fetch` | off | Skip the fetch: the store is fresh already. |
 | `--wait SECONDS` | `900` | How long to wait for LM Studio's server to come up; `0` fails at once if it's down. |
 
@@ -233,8 +230,8 @@ Chunks the newest export, sends each chunk to the model, saves the raw replies u
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--model NAME` | the server's only model | Model id, or part of one. |
-| `--time MIN` | unset | Size the summaries for a reading time: compression 0.25 unless they would take more than half of it (see [Reading time](#reading-time)). `assemble_brief.py` then cuts priority and image tweets to it. |
-| `--compression RATIO` | `0.25` | Or set it yourself: share of the regular posts' words the summaries keep, `0.25` or `25%`. Not with `--time`. |
+| `--keep PCT` | unset | Size the summaries for a share of the whole day: compression 0.25 unless they would take more than half of it (see [Brief size](#brief-size)). `assemble_brief.py` then cuts priority and image tweets to it. |
+| `--compression RATIO` | `0.25` | Or set it yourself: share of the regular posts' words the summaries keep, `0.25` or `25%`. Not with `--keep`. |
 | `--dry-run` | off | Print the chunk plan (sizes, item limits, word targets) and stop; no model call. |
 | `--only ID,ID` | all chunks | Run only these chunks, e.g. `regular-01,recap-03`. |
 | `--stats` | off | Print the chunk plan, per-chunk progress, token counts, chars-per-token, and the full `run_stats.py` table (always available on demand: see below). |
@@ -242,13 +239,13 @@ Chunks the newest export, sends each chunk to the model, saves the raw replies u
 
 ### `assemble_brief.py`
 
-Checks a run's summaries and writes `digests/<date>-<hour>-<window>-brief.md`. Asks the model once per section for its **In short** line (and, with `language:` set, translates), cached in the run's folder, so re-assembling is free. The server must still be up for those calls: with it down, the brief is written without them. It never replaces an earlier brief: a name already taken gets a number. A run made with `--time` is fitted to it (see [Reading time](#reading-time)).
+Checks a run's summaries and writes `digests/<date>-<hour>-<window>-brief.md`. Asks the model once per section for its **In short** line (and, with `language:` set, translates), cached in the run's folder, so re-assembling is free. The server must still be up for those calls: with it down, the brief is written without them. It never replaces an earlier brief: a name already taken gets a number. A run made with `--keep` is cut to it (see [Brief size](#brief-size)).
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--run LABEL` | newest in `digests/.runs/` | Which run to assemble. |
-| `--time MIN` | the run's own `--time` | Fit the brief to this reading time; any run can be re-cut this way. |
-| `--out PATH` | `digests/<date>-<hour>-<window>[-<N>min]-brief.md` | Where to write the brief (a path given here is used as is). |
+| `--keep PCT` | the run's own `--keep` | Keep this share of the whole day; any run can be re-cut this way. A run made before `--keep` existed is cut to its old minutes, converted. |
+| `--out PATH` | `digests/<date>-<hour>-<window>[-keep<N>]-brief.md` | Where to write the brief (a path given here is used as is). |
 | `--no-summaries` | off | Skip the section summaries: no model call. |
 | `--no-translate` | off | Show every tweet as posted, whatever `language:` says. |
 | `--refresh` | off | Ask the model again even where an answer is cached. |

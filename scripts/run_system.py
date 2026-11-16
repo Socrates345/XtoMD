@@ -9,7 +9,7 @@ failed chunk's line may carry a few words of the model's reply).
     python scripts\\run_system.py --model qwen --dry-run
     python scripts\\run_system.py --model qwen --only regular-01
     python scripts\\run_system.py --model qwen
-    python scripts\\run_system.py --model qwen --time 10           # a brief you can read in about 10 minutes
+    python scripts\\run_system.py --model qwen --keep 30           # a brief 30% the size of the whole day
     python scripts\\run_system.py --model qwen --compression 10%     # or set the summaries' compression yourself
 
 Before a real run: the server is up, the model is loaded with thinking off and a context
@@ -40,9 +40,10 @@ from xmd.summary.chunk import (  # noqa: E402
 from xmd.core.config import load_config, read_ad_sources, read_group_levels, read_language, read_storage  # noqa: E402
 from xmd.core.models import FeedItem  # noqa: E402
 from xmd.summary.ads import find_ads  # noqa: E402
-from xmd.summary.brief import LINES_PER_MINUTE, SECONDS_PER_IMAGE, build_brief, digest_items, load_item_ids  # noqa: E402
+from xmd.summary.brief import build_brief, digest_items, load_item_ids  # noqa: E402
 from xmd.summary.budget import (  # noqa: E402
-    MAX_COMPRESSION, PRIORITY_SHARE, SUMMARY_SHARE, bare_cuts, choose_compression, parse_minutes, summary_lines,
+    MAX_COMPRESSION, PRIORITY_SHARE, SUMMARY_FILL, SUMMARY_SHARE, bare_cuts, choose_compression, parse_keep,
+    summary_lines,
 )
 from xmd.summary.engine import (  # noqa: E402
     API_KEY_ENV_VAR, BASE_URL_ENV_VAR, DEFAULT_BASE_URL, EXTRA_BODY_ENV_VAR, MODEL_ENV_VAR, Completion, Engine,
@@ -104,12 +105,20 @@ def _compression(text: str) -> float:
         raise argparse.ArgumentTypeError(str(exc)) from None
 
 
-def time_budget(text: str) -> float:
-    """--time's argument (make_brief.py and assemble_brief.py use it too)."""
+def keep_share(text: str) -> float:
+    """--keep's argument (make_brief.py and assemble_brief.py use it too)."""
     try:
-        return parse_minutes(text)
+        return parse_keep(text)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+def no_minutes(_text: str) -> None:
+    """--time's argument, now refused (make_brief.py and assemble_brief.py use it too): the brief is cut to a share
+    of the whole day. Kept as a flag so that `--time 10` says so, rather than read as --timeout 10 (argparse takes
+    an unambiguous prefix of a flag for the flag)."""
+    raise argparse.ArgumentTypeError("there is no reading time any more: use --keep PCT, a share of the whole day "
+                                     "(--keep 30 is about what --time 10 was)")
 
 
 def extra_body(text: str) -> dict:
@@ -120,12 +129,12 @@ def extra_body(text: str) -> dict:
         raise argparse.ArgumentTypeError(str(exc)) from None
 
 
-def _fit_compression(minutes: float, export: Path, digests: Path, config_path: str, mapping: dict, posts, repeated,
-                     levels: dict, max_input_tokens: int) -> float | None:
-    """The compression for a brief of `minutes`, having said how the time is shared: the brief is laid out without
-    summaries (priority and image tweets, trending...) and measured, whole and at its barest, and the summaries'
-    lines are added at each compression (see budget.py). None, having said why, when the digest's tweets can't be
-    read."""
+def _fit_compression(keep: float, export: Path, digests: Path, config_path: str, mapping: dict, posts, repeated,
+                     levels: dict, max_input_tokens: int) -> tuple[float, float] | None:
+    """(the compression for a brief keeping `keep` percent of the whole day, the whole day's estimated length),
+    having said how the share is spent: the brief is laid out without summaries (priority and image tweets,
+    trending...) and measured, whole and at its barest, and the summaries' lines are added at each compression (see
+    budget.py). None, having said why, when the digest's tweets can't be read."""
     try:
         config = load_config(config_path)
     except (FileNotFoundError, ValueError) as exc:
@@ -133,7 +142,7 @@ def _fit_compression(minutes: float, export: Path, digests: Path, config_path: s
         return None
     ids = load_item_ids(export, digests / f"{export.stem}.md")
     if ids is None:
-        print(f"{export.with_suffix('.items.json')} is missing: --time needs it to measure the brief; use --compression")
+        print(f"{export.with_suffix('.items.json')} is missing: --keep needs it to measure the brief; use --compression")
         return None
     items, _history = digest_items(ids, config.storage)
     no_summaries = [{"chunk": "plan", "tier": "regular", "ids": [p.n for p in posts], "ok": True, "reply": {"items": []}}]
@@ -147,22 +156,28 @@ def _fit_compression(minutes: float, export: Path, digests: Path, config_path: s
             retweet_chars=config.retweet_chars, media_chars=config.media_chars, cuts=cuts,
         )
 
-    def sized(cuts):
-        barest = build(cuts)
-        return barest, choose_compression(
-            minutes, base.stats["minutes_at_your_pace"], barest.stats["minutes_at_your_pace"],
-            lambda c: summary_lines(make_chunks(posts, repeated, tier_shares(c), max_input_tokens, levels=levels)))
+    def chunks_at(compression: float):
+        return make_chunks(posts, repeated, tier_shares(compression), max_input_tokens, levels=levels)
 
     base = build()
-    bare = bare_cuts(minutes, base)
+    # the whole day as it will come out: the summaries at what replies really fill, not at the most they may
+    whole = base.stats["length"] + summary_lines(chunks_at(MAX_COMPRESSION), SUMMARY_FILL)
+    target = keep / 100 * whole
+
+    def sized(cuts):
+        barest = build(cuts)
+        return barest, choose_compression(target, base.stats["length"], barest.stats["length"],
+                                          lambda c: summary_lines(chunks_at(c)))
+
+    bare = bare_cuts(target, base, keep)
     barest, sizing = sized(bare)
-    if (sizing.summary_minutes > minutes - barest.stats["minutes_at_your_pace"] and not bare.priority_one_liners
-            and base.stats["band_minutes"].get("priority")):  # as plan_cuts will: in full, the brief can't fit
+    if (sizing.summary > target - barest.stats["length"] and not bare.priority_one_liners
+            and base.stats["band_lengths"].get("priority")):  # as plan_cuts will: in full, the brief can't fit
         bare = replace(bare, priority_one_liners=True)
         barest, sizing = sized(bare)
-    for line in _sizing_lines(minutes, sizing, bare.priority_one_liners, base.stats, barest.stats):
+    for line in _sizing_lines(keep, whole, target, sizing, bare.priority_one_liners, base.stats, barest.stats):
         print(line)
-    return sizing.compression
+    return sizing.compression, whole
 
 
 def _ad_posts(export: Path, digests: Path, config_path: str, accounts: frozenset[str]) -> dict[str, FeedItem] | None:
@@ -192,34 +207,41 @@ def _without(posts, repeated, mapping: dict, urls: set[str]):
     return kept, [g for g in groups if len(g) >= 2]
 
 
-def _sizing_lines(minutes: float, sizing, one_liners: bool, whole: dict, barest: dict) -> list[str]:
-    """What --time decided, for the console: how long the brief is uncut, and how the time is shared. `whole` and
-    `barest` are the stats of the brief without its summaries, uncut and at its barest."""
-    pace = f"{LINES_PER_MINUTE} lines a minute, {SECONDS_PER_IMAGE} s a picture"
-    if sizing.whole_minutes <= minutes:
-        return [f"time {minutes:g} min ({pace}): the whole brief takes ~{sizing.whole_minutes:.0f} min at most, "
-                f"so nothing is cut (compression {sizing.compression:.2f})"]
-    leaves = minutes - barest["minutes_at_your_pace"]  # what the summaries and the image tweets have between them
-    half = SUMMARY_SHARE * minutes <= leaves
-    limit = "half the time" if half else f"the ~{max(leaves, 0):.1f} min the rest leaves"
+def _share(length: float, whole: float) -> str:
+    """`length` as a share of the whole day, for the console."""
+    return f"{100 * length / whole:.0f}%" if whole else "-"
+
+
+def _sizing_lines(keep: float, whole: float, target: float, sizing, one_liners: bool, base: dict,
+                  barest: dict) -> list[str]:
+    """What --keep decided, for the console: how big the whole day is, and how the share kept is spent. Lengths as
+    brief_length weighs them (lines, a picture counting a few more); `base` and `barest` are the stats of the brief
+    without its summaries, uncut and at its barest."""
+    head = f"keep {keep:g}%: the whole day weighs ~{whole:.0f} lines (pictures counted as lines), so ~{target:.0f} to keep"
+    if sizing.whole <= target:
+        return [f"{head}; the whole brief fits, so nothing is cut (compression {sizing.compression:.2f})"]
+    leaves = target - barest["length"]  # what the summaries and the image tweets have between them
+    half = SUMMARY_SHARE * target <= leaves
+    limit = "half of it" if half else f"the ~{max(leaves, 0):.0f} the rest leaves"
     if sizing.compression == MAX_COMPRESSION:
         why = "the usual one: they have the room"
     elif sizing.fits:
         why = f"lowered from {MAX_COMPRESSION:.2f} to fit {limit}"
     else:
         why = f"the lowest there is, though more than {limit}"
-    priority = whole["band_minutes"].get("priority", 0)
-    lines = [f"time {minutes:g} min ({pace}): uncut, this brief would take ~{sizing.whole_minutes:.0f} min. So:",
-             f"  summaries        ~{sizing.summary_minutes:.1f} min at most, compression {sizing.compression:.2f} ({why})"]
+    priority = base["band_lengths"].get("priority", 0)
+    lines = [f"{head}. So:",
+             f"  summaries        ~{sizing.summary:.0f} at most ({_share(sizing.summary, whole)} of the day), "
+             f"compression {sizing.compression:.2f} ({why})"]
     if priority:
-        cause = "more than half the time" if priority > PRIORITY_SHARE * minutes else "too long for the brief to fit"
-        lines.append(f"  priority tweets  ~{barest['band_minutes'].get('priority', 0):.1f} min, "
-                     + (f"one line each (in full ~{priority:.1f} min: {cause})" if one_liners else "in full"))
-    lines.append(f"  image tweets     ~{max(leaves - sizing.summary_minutes, 0):.1f} min of the "
-                 f"~{whole['band_minutes'].get('images', 0):.1f} they take whole, plus what the summaries leave unused: "
+        cause = "more than half of what is kept" if priority > PRIORITY_SHARE * target else "too long for the brief to fit"
+        lines.append(f"  priority tweets  ~{barest['band_lengths'].get('priority', 0):.0f}, "
+                     + (f"one line each (in full ~{priority:.0f}: {cause})" if one_liners else "in full"))
+    lines.append(f"  image tweets     ~{max(leaves - sizing.summary, 0):.0f} of the "
+                 f"~{base['band_lengths'].get('images', 0):.0f} they take whole, plus what the summaries leave unused: "
                  "pictures first, then a line each, then links")
-    if sizing.summary_minutes > leaves:
-        lines.append(f"  that is more than {minutes:g} min: the brief may come out longer than asked")
+    if sizing.summary > leaves:
+        lines.append(f"  that is more than {keep:g}% of the day: the brief may come out longer than asked")
     lines.append("  the summaries are sized now; the priority and image tweets are cut when the brief is assembled")
     return lines
 
@@ -227,10 +249,11 @@ def _sizing_lines(minutes: float, sizing, one_liners: bool, whole: dict, barest:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Summarize a digest export with a local model and save the raw replies.")
     size = ap.add_mutually_exclusive_group()
-    size.add_argument("--time", type=time_budget, default=None, metavar="MIN",
-                      help="the reading time to aim at, in minutes (10, 30...): the summaries keep the usual compression "
-                           "unless they alone would take more than half of it, and assemble_brief.py cuts image and "
-                           "priority tweets to fit it")
+    size.add_argument("--keep", type=keep_share, default=None, metavar="PCT",
+                      help="the share of the whole day to keep, in percent (30 or 30%%; 30 is about what a 10-minute "
+                           "brief was): the summaries keep the usual compression unless they alone would take more than "
+                           "half of it, and assemble_brief.py cuts image and priority tweets to fit it")
+    ap.add_argument("--time", type=no_minutes, help=argparse.SUPPRESS)  # see no_minutes
     size.add_argument("--compression", type=_compression, default=DEFAULT_COMPRESSION, metavar="RATIO",
                     help="summary words / source words for the regular posts, as 0.30 or 30%% (default: %(default)s): "
                          "0.10 keeps about 10%% of their words. Retweets and the recap group keep their own fixed shares")
@@ -249,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", default="sources.yaml",
                     help="sources.yaml: its `language:` says which languages the summaries may keep and which one the rest is written in")
     ap.add_argument("--out-dir", default="", help="where runs are saved (default: DIGESTS/.runs)")
-    ap.add_argument("--label", default="", help="name of this run (default: model, compression and time)")
+    ap.add_argument("--label", default="", help="name of this run (default: model, compression and share kept)")
     ap.add_argument("--only", default="", help="comma-separated chunk ids to run, e.g. regular-01,recap-03")
     ap.add_argument("--dry-run", action="store_true", help="show the chunk plan and stop; no model is called")
     ap.add_argument("--no-think", action="store_true", help="send chat_template_kwargs enable_thinking=false")
@@ -273,12 +296,15 @@ def main(argv: list[str] | None = None) -> int:
     x_md = Path(args.sources_dir) / "x.md"
     levels = read_group_levels(x_md) if x_md.exists() else {}
     accounts = read_ad_sources(x_md) if x_md.exists() else frozenset()
-    if args.time:
-        compression = _fit_compression(args.time, export, digests, args.config, mapping, posts, repeated, levels,
-                                       args.max_input_tokens)
-        if compression is None:
+    if args.keep == 100:  # the whole day: nothing to fit
+        args.keep = None
+    whole = None
+    if args.keep:
+        fitted = _fit_compression(args.keep, export, digests, args.config, mapping, posts, repeated, levels,
+                                  args.max_input_tokens)
+        if fitted is None:
             return 2
-        args.compression = compression
+        args.compression, whole = fitted
     chunks = make_chunks(posts, repeated, tier_shares(args.compression), args.max_input_tokens, levels=levels)
     try:
         language = read_language(args.config)
@@ -364,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
                               on_result=_show if args.stats else None)
 
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", model).strip("-")
-    budget = f"__t{args.time:g}" if args.time else ""
+    budget = f"__k{args.keep:g}" if args.keep else ""
     label = args.label or f"{slug}__c{args.compression:.2f}{budget}__{started:%Y%m%d-%H%M%S}" + ("__partial" if wanted else "")
     out = Path(args.out_dir) / label if args.out_dir else digests / ".runs" / label
     write_run(out, {
@@ -376,7 +402,8 @@ def main(argv: list[str] | None = None) -> int:
                    "temperature": args.temperature, "retries": args.retries, "bound_items": args.bound_items,
                    "warmup_seconds": round(warm.seconds, 1)},
         "compression_ratio": args.compression,
-        "time_budget": args.time,  # minutes; assemble_brief.py fits the brief to it
+        "keep_percent": args.keep,  # assemble_brief.py cuts the brief to this share of the whole day
+        "whole_length": round(whole, 1) if whole else None,  # the whole day as estimated here (see budget.py)
         "ratios": tier_shares(args.compression),
         "levels": levels,
         "language": {"accepted": list(language.accepted), "translate_to": language.translate_to} if language else None,
