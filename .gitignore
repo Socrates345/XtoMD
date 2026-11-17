@@ -24,3 +24,6 @@ __pycache__/
 build/
 dist/
 scripts/results_on_current_gpu.md
+
+readlater/node_modules/*
+readlater/summaries/*
