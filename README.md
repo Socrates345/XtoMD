@@ -5,8 +5,9 @@
 **Stop doom scrolling on X!<br>XMD turns tweets from your favorite followings into a daily brief.**
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
-![Local LLM](https://img.shields.io/badge/LLM-local%2C%20LM%20Studio-6E56CF)
+![LLM](https://img.shields.io/badge/LLM-LM%20Studio%20or%20Venice-6E56CF)
 ![Markdown](https://img.shields.io/badge/output-markdown-7C3AED?logo=obsidian&logoColor=white)
+![VPS to phone](https://img.shields.io/badge/runs%20on-laptop%20or%20VPS%20%E2%86%92%20phone-0EA5E9)
 ![MIT](https://img.shields.io/badge/license-MIT-green)
 
 </div>
@@ -14,13 +15,15 @@
 No X account needed and no scraping of your own.
 Tweets come from a paid API, are sorted by rules you write, summarized by a model on your own GPU or through an anonymized model on Venice, and saved as .md.
 
+Run it on your laptop, or set up a small VPS once and get the brief on your phone every day, hands-off.
+
 ```mermaid
 flowchart LR
     A["sources/x.md<br/>X accounts list"] --> B["fetch<br/>tweetapi.com or twitterapi.io"]
     B --> C[("xmd.db")]
     C --> D["digest"]
     D --> E["LLM<br/>LM Studio or Venice.ai"]
-    E --> F["brief.md<br/>read in Obsidian"]
+    E --> F["brief.md<br/>Obsidian or your phone"]
 ```
 
 ## What a brief looks like
@@ -49,9 +52,21 @@ ACME confirms the Globex deal will close in Q1.
 - **Repetition is the signal.** A story several of your accounts post goes to Trending, and names far louder than usual are flagged.
 - **Pictures are never summarized.** The model can't see an image, so you get the tweet itself.
 - **As short as you want.** `--keep 30` keeps 30% of the day: pictures go first, summaries last.
-- **Local by default.** The summaries come from your own GPU. Only the X backend you pay sees your follow list.
+- **Local by default.** On the laptop, summaries come from your own GPU and only the X backend you pay sees your follow list. The VPS and phone use Venice instead.
 
-## Setup
+## On autopilot: VPS to phone
+
+Set it up once and the brief comes to you, laptop off:
+
+1. **A small VPS** (1 vCPU, 1 GB, Debian or Ubuntu) makes the brief every day on a timer, summarized by Qwen 3.5 on Venice.
+2. **ntfy** notifies your phone: brief ready, or the run failed.
+3. **Buttons on your Android phone** (Termux) download it, or ask for a fresh one, into `Documents/xmd-briefs` or straight into your Obsidian vault.
+
+The phone's SSH key can only ask for a brief or download one, nothing else. No VPS? The phone can make the brief on its own.
+
+About an hour to set up: [docs/remote-setup.md](docs/remote-setup.md). How it works: [docs/remote.md](docs/remote.md).
+
+## Setup on the laptop
 
 You need Python 3.10+, [LM Studio](https://lmstudio.ai), and an API key from [tweetapi.com](https://tweetapi.com) or [twitterapi.io](https://twitterapi.io).
 
@@ -113,7 +128,7 @@ Each x.com link is recognised as an X Article, a thread, a long post or a post; 
 | | |
 | --- | --- |
 | [Usage](docs/usage.md) | Every command and flag, the settings, the brief part by part, its size and how to cut it, troubleshooting |
-| [Without the laptop](docs/remote.md) | A daily brief from a small VPS, asked for from the phone ([setup](docs/remote-setup.md)) |
+| [VPS to phone](docs/remote.md) | The automated daily brief: VPS timer, phone notification and buttons, vault delivery ([setup](docs/remote-setup.md)) |
 | [Read later](readlater/README.md) | Saved X posts, Articles, threads and web pages summarized into one page |
 | [Design and changelog](docs/digest-summary.md) | How the brief is built, and why |
 
