@@ -51,6 +51,14 @@ RETRYABLE_STATUS_CODES = (429, 403)  # a 403 was observed on /user/by-username e
 # it (a common Cloudflare rate-limiting-rule default). Backing off and retrying gives a
 # transient edge-level block a chance to clear instead of failing the whole source.
 
+# A call that gets no answer in time (httpx's "timed out") or whose gateway gave up on the origin: tweetapi.com
+# reads X live behind Cloudflare, so one call in many stalls while the next one answers. Before this was retried,
+# every stall on the first two calls of a handle (resolve-id, first page) failed the whole source: ~10% of sources
+# in one "since last run" fetch. Fewer retries than the status codes above, because each one can cost a full
+# `timeout`: with the API down, a handle gives up after 3 calls (~60 s), not 5 (~100 s).
+TRANSPORT_RETRIES = 2
+GATEWAY_STATUS_CODES = (502, 503, 504, 520, 521, 522, 523, 524)  # 52x: Cloudflare's own "origin did not answer"
+
 # Multiplicative cushion applied on top of the strict 60/per_minute spacing (see
 # _RateLimiter.configure): trades a bit of throughput for headroom against exactly the
 # 403 above, since pacing at the exact nominal rate still isn't safe in practice.
@@ -201,15 +209,25 @@ def _headers(api_key: str) -> dict:
 
 
 def _get(url: str, params: dict, api_key: str, timeout: float) -> dict:
-    """GET with retry-on-429/403 (see RETRYABLE_STATUS_CODES), mirroring
-    adapters/twitterapi.py's _get() — paced by _rate_limiter first so
+    """GET with retry-on-429/403 (see RETRYABLE_STATUS_CODES), on a gateway error and on no answer in time
+    (TRANSPORT_RETRIES), mirroring adapters/twitterapi.py's _get() — paced by _rate_limiter first so
     concurrent sources don't blow through tweetapi.com's per-minute cap in
     the first place."""
     delay = RETRY_BACKOFF
+    no_answer = 0  # calls that got no answer in time, retried up to TRANSPORT_RETRIES
     for attempt in range(MAX_RETRIES + 1):
         _rate_limiter.wait()
-        resp = httpx.get(url, params=params, headers=_headers(api_key), timeout=timeout)
-        if resp.status_code not in RETRYABLE_STATUS_CODES or attempt == MAX_RETRIES:
+        try:
+            resp = httpx.get(url, params=params, headers=_headers(api_key), timeout=timeout)
+        except httpx.TransportError:  # a read/connect timeout, a dropped connection: asking again can change it
+            no_answer += 1
+            if no_answer > TRANSPORT_RETRIES or attempt == MAX_RETRIES:
+                raise
+            time.sleep(delay)
+            delay *= 2
+            continue
+        retryable = resp.status_code in RETRYABLE_STATUS_CODES or resp.status_code in GATEWAY_STATUS_CODES
+        if not retryable or attempt == MAX_RETRIES:
             resp.raise_for_status()
             return resp.json()
         time.sleep(delay)

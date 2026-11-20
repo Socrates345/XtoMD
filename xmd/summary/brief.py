@@ -55,6 +55,7 @@ from ..digest.trending import DEFAULT_SIMILARITY, find_stories
 # (measured 2026-09-20: 40 lines a minute, 4 s a picture, so a picture is 4 s of lines), so a share of the day
 # compares with the minutes it replaces: 10 old minutes are 400.
 PICTURE_LINES = 4 * 40 / 60
+MAX_PICTURES = 4  # a post with more pictures shows none: one line says how many, with the post's link
 MAX_CITES = 4  # links shown per item; the rest are counted (a recap theme has its own cap, chunk.MAX_THEME_IDS)
 PRIORITY_LINE_CHARS = 280  # a priority tweet cut to one line (see Cuts) keeps about a tweet's worth
 
@@ -106,6 +107,20 @@ def measure(text: str) -> tuple[int, int]:
     text = _COMMENT.sub(" ", _IMAGE.sub(" ", text))
     text = URL.sub(" ", _LINK.sub(r"\1", _TAG.sub(" ", text)))
     return sum(1 for token in text.split() if any(c.isalnum() for c in token)), images
+
+
+def picture_cost(images: int) -> tuple[int, int]:
+    """(lines, pictures) a post's `images` pictures add to the brief as _pictures shows them."""
+    return (images, images) if images <= MAX_PICTURES else (1, 0)
+
+
+def _pictures(images: list[str], url: str = "") -> list[str]:
+    """A post's pictures, each followed by a blank line; past MAX_PICTURES, one line counting them instead, with
+    the post's link (a gallery that size buries the brief, and is better looked at on X)."""
+    if len(images) <= MAX_PICTURES:
+        return [line for image in images for line in (f"![]({image})", "")]
+    count = f"🖼 {len(images)} pictures"
+    return [f"{count}: [Post Link]({url})" if url else count, ""]
 
 
 def brief_length(lines: int, images: int) -> float:
@@ -283,9 +298,7 @@ def _priority_block(item: FeedItem, translated: Translated | None = None) -> lis
     heading = f"#### {_md(item.source)} <!-- item:{item.id} --> [Post Link]({item.url})"
     if item.published:
         heading += f" · {item.published.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC"
-    lines = [heading, ""]
-    for image in item.images:
-        lines += [f"![]({image})", ""]
+    lines = [heading, ""] + _pictures(item.images, item.url)
     shown, found = _localized(item, translated)
     body = body_md(shown)
     if found:
@@ -296,9 +309,8 @@ def _priority_block(item: FeedItem, translated: Translated | None = None) -> lis
 def _retweeted_block(group: Retweeted, translated: Translated | None = None) -> list[str]:
     """A post several priority tweets retweet, like _priority_block (pictures first, translated with the original
     quoted under it), with what each of them said about it listed below."""
-    lines = [retweeted_heading(group), ""]
-    for image in group.images:
-        lines += [f"![]({image})", ""]
+    shown_on = (group.original or group.plain[0]).url if group.images else ""  # the post the pictures are on
+    lines = [retweeted_heading(group), ""] + _pictures(group.images, shown_on)
     if group.original:
         shown, found = _localized(group.original, translated)
         body, original = body_md(shown), body_md(group.original)
@@ -474,8 +486,7 @@ def build_brief(
             block = [f"### 🖼 Images — {len(by_tier[MEDIA])}", ""]
             grouped = [i for _source, batch in _grouped_chronological(by_tier[MEDIA], priority_sources) for i in batch]
             for item in (i for i in grouped if cuts.keeps_pictures(i)):
-                for image in item.images:  # pictures first, each followed by a blank line, then the caption
-                    block += [f"![]({image})", ""]
+                block += _pictures(item.images, item.url)  # pictures first, then the caption
                 block += [*_one_liner(item, media_chars, translated, caption=True), ""]
             captioned = [i for i in grouped if not cuts.keeps_pictures(i) and cuts.keeps_caption(i)]
             for item in captioned:  # cut to keep a share of the day: a line, and the picture a click away

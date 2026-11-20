@@ -9,6 +9,7 @@ from xmd.summary.brief import (
     PICTURE_LINES, Cuts, brief_length, brief_stamp, build_brief, digest_item_ids, load_item_ids, load_run, measure,
     size_line, window_kind,
 )
+from xmd.summary.brief import MAX_PICTURES, picture_cost
 from xmd.summary.chunk import MAX_THEME_IDS, parse_export
 from xmd.digest.export import build_export
 from xmd.core.models import FeedItem, FetchReport
@@ -483,3 +484,29 @@ def test_a_brief_whose_fetch_had_trouble_says_so_in_its_first_line_and_ends_with
 def test_a_brief_whose_fetch_went_well_says_nothing_about_it():
     assert "Fetch report" not in _brief().markdown
     assert _brief(fetch_report=FetchReport(NOW, 9)).markdown == _brief().markdown
+
+
+def _gallery(n):
+    return [f"https://img.example/g{k}.jpg" for k in range(n)]
+
+
+@pytest.mark.parametrize("priority", [True, False])
+def test_a_post_with_more_than_max_pictures_shows_none_but_counts_them_with_its_link(priority):
+    post = _post(2, "@vip" if priority else "@pic", "a big gallery", group="business", images=_gallery(MAX_PICTURES + 1))
+    _, mapping = build_export([post], NOW, priority_sources=PRIORITY)
+    brief = build_brief([post], NOW, [], mapping, [], priority_sources=PRIORITY)
+    assert "![](" not in brief.markdown and brief.stats["images"] == 0
+    assert f"🖼 {MAX_PICTURES + 1} pictures: [Post Link]({post.url})" in brief.markdown
+    assert "a big gallery" in brief.markdown
+
+
+def test_a_post_with_max_pictures_shows_them_all():
+    post = _post(2, "@pic", "four of them", group="business", images=_gallery(MAX_PICTURES))
+    _, mapping = build_export([post], NOW)
+    brief = build_brief([post], NOW, [], mapping, [])
+    assert brief.markdown.count("![](") == MAX_PICTURES and "pictures:" not in brief.markdown
+
+
+def test_picture_cost_matches_what_is_shown():
+    assert picture_cost(MAX_PICTURES) == (MAX_PICTURES, MAX_PICTURES)
+    assert picture_cost(MAX_PICTURES + 3) == (1, 0)

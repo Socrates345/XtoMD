@@ -128,6 +128,7 @@ async def fetch_all(
         t0 = time.perf_counter()
         try:
             async with sem:
+                t0 = time.perf_counter()  # from here: the time spent queued for a slot is not the source's own
                 adapter = tweetapi_adapter if config.x_backend == "tweetapi" else twitterapi_adapter
                 fetch_kwargs = dict(max_age_hours=max_age_hours, fallback_latest=True)
                 if config.x_backend == "tweetapi":

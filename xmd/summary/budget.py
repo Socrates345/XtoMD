@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, replace
 from typing import Callable
 
-from .brief import Brief, Cuts, brief_length
+from .brief import Brief, Cuts, brief_length, picture_cost
 from .chunk import DEFAULT_COMPRESSION, LEVEL_FACTORS, Chunk
 from ..core.models import FeedItem
 from ..core.tiers import in_recap_group
@@ -188,7 +188,8 @@ def plan_cuts(
     pictures, lined = [], []
     picture_room = slack * PICTURE_SHARE
     for item in ranked:
-        cost = brief_length(len(item.images) + 1, len(item.images))
+        lines, shown = picture_cost(len(item.images))  # past MAX_PICTURES, a line counting them
+        cost = brief_length(lines + 1, shown)
         if cost <= picture_room:
             pictures.append(item)
             picture_room -= cost
@@ -197,7 +198,7 @@ def plan_cuts(
     lined = rest[:min(len(rest), math.floor(slack))]
     slack -= len(lined)
     for item in list(lined):
-        cost = brief_length(len(item.images), len(item.images))  # its line is paid for already
+        cost = brief_length(*picture_cost(len(item.images)))  # its line is paid for already
         if cost <= slack:
             lined.remove(item)
             pictures.append(item)

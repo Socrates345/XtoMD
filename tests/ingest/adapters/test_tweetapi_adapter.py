@@ -474,3 +474,78 @@ def test_a_handle_the_backend_knows_no_account_for_is_reported_as_not_found(monk
     _fake_calls(monkeypatch, [{"data": None}])
     with pytest.raises(HandleNotFound, match="could not resolve @gone to a user id"):
         tweetapi_adapter.fetch(Source(name="@gone", type="tweetapi", handle="gone"), "key")
+
+
+def test_a_call_that_times_out_is_asked_again(monkeypatch):
+    """A stalled call (httpx's "timed out") on the first calls of a handle used to fail the whole source."""
+    import httpx
+
+    calls = []
+    responses = iter([
+        httpx.ReadTimeout("timed out"),
+        FakeJsonResponse(_by_username()),
+        httpx.ConnectTimeout("timed out"),
+        FakeJsonResponse(_tweets_page([
+            {"id": "1", "text": "made it through", "createdAt": "2026-07-08T06:00:00.000Z",
+             "author": {"username": "someone"}},
+        ])),
+    ])
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        answer = next(responses)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(tweetapi_adapter.httpx, "get", fake_get)
+    monkeypatch.setattr(tweetapi_adapter.time, "sleep", lambda *_: None)
+
+    items = tweetapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    assert [i.title for i in items] == ["made it through"]
+    assert len(calls) == 4
+
+
+def test_a_call_that_keeps_timing_out_gives_up_after_its_own_retries(monkeypatch):
+    import httpx
+
+    calls = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(tweetapi_adapter.httpx, "get", fake_get)
+    monkeypatch.setattr(tweetapi_adapter.time, "sleep", lambda *_: None)
+
+    with pytest.raises(httpx.ReadTimeout):
+        tweetapi_adapter.fetch(Source("@someone", "twitterapi", handle="someone"), api_key="k")
+    assert len(calls) == tweetapi_adapter.TRANSPORT_RETRIES + 1
+
+
+@pytest.mark.parametrize("status", [502, 503, 504, 524])
+def test_a_gateway_error_is_asked_again(monkeypatch, status):
+    calls = []
+    responses = iter([
+        FakeJsonResponse({}, status_code=status),
+        FakeJsonResponse(_by_username()),
+        FakeJsonResponse(_tweets_page([
+            {"id": "1", "text": "made it through", "createdAt": "2026-07-08T06:00:00.000Z",
+             "author": {"username": "someone"}},
+        ])),
+    ])
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        return next(responses)
+
+    monkeypatch.setattr(tweetapi_adapter.httpx, "get", fake_get)
+    monkeypatch.setattr(tweetapi_adapter.time, "sleep", lambda *_: None)
+
+    items = tweetapi_adapter.fetch(
+        Source("@someone", "twitterapi", handle="someone"), api_key="k", max_age_hours=0
+    )
+    assert [i.title for i in items] == ["made it through"]
+    assert len(calls) == 3
